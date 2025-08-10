@@ -10,6 +10,10 @@ const ACTION_TYPES = {
   REMOVE_MEMORY_FILE: 'REMOVE_MEMORY_FILE',
   SAVE_MEMORY_FILE_TO_DISK: 'SAVE_MEMORY_FILE_TO_DISK',
   
+  // Version management
+  RESTORE_FILE_VERSION: 'RESTORE_FILE_VERSION',
+  CLEAR_FILE_HISTORY: 'CLEAR_FILE_HISTORY',
+  
   // Folder Management
   SET_OPEN_FOLDERS: 'SET_OPEN_FOLDERS',
   ADD_FOLDER: 'ADD_FOLDER',
@@ -58,6 +62,33 @@ const STORAGE_KEYS = {
   FOLDERS: 'fileExplorer_openFolders',
   EXPANDED_FOLDERS: 'fileExplorer_expandedFolders',
   FILE_HANDLES: 'fileExplorer_fileHandles',
+};
+
+// Helper function to get current content from version history
+const getCurrentContent = (memoryFile) => {
+  if (!memoryFile || !memoryFile.versions || memoryFile.versions.length === 0) {
+    return '';
+  }
+  const currentIndex = memoryFile.currentVersionIndex || 0;
+  return memoryFile.versions[currentIndex]?.content || '';
+};
+
+// Helper function to add a new version (always becomes current)
+const addVersion = (memoryFile, content, description = 'Manual edit') => {
+  const newVersion = {
+    content,
+    timestamp: new Date(),
+    description,
+    generationId: Date.now().toString()
+  };
+  
+  const versions = [newVersion, ...(memoryFile.versions || [])].slice(0, 10);
+  return {
+    ...memoryFile,
+    versions,
+    currentVersionIndex: 0,
+    lastModified: new Date()
+  };
 };
 
 const saveFoldersToStorage = (folders) => {
@@ -117,7 +148,7 @@ const createInitialState = () => ({
   // File State
   selectedFile: null,
   availableFiles: [],
-  memoryFiles: {}, // { fileId: { name: string, content: string, type: string, isGenerated: boolean, lastModified: Date } }
+  memoryFiles: {}, // { fileId: { name: string, type: string, isGenerated: boolean, lastModified: Date, versions: Array, currentVersionIndex: number } }
   
   // Folder State
   openFolders: loadFoldersFromStorage(),              // Load from localStorage
@@ -191,35 +222,42 @@ const appStateReducer = (state, action) => {
     
     case ACTION_TYPES.ADD_MEMORY_FILE: {
       const { fileId, name, content, type = 'text', isGenerated = false } = action.payload;
-      return {
-        ...state,
-        memoryFiles: {
-          ...state.memoryFiles,
-          [fileId]: {
-            name,
-            content,
-            type,
-            isGenerated,
-            lastModified: new Date(),
-          }
-        }
+      const initialVersion = {
+        content,
+        timestamp: new Date(),
+        description: '🚀 Initial file generation',
+        generationId: 'initial'
       };
-    }
-    
-    case ACTION_TYPES.UPDATE_MEMORY_FILE: {
-      const { fileId, content } = action.payload;
-      const existingFile = state.memoryFiles[fileId];
-      if (!existingFile) return state;
       
       return {
         ...state,
         memoryFiles: {
           ...state.memoryFiles,
           [fileId]: {
-            ...existingFile,
-            content,
+            name,
+            type,
+            isGenerated,
             lastModified: new Date(),
+            versions: [initialVersion],
+            currentVersionIndex: 0
           }
+        }
+      };
+    }
+    
+    case ACTION_TYPES.UPDATE_MEMORY_FILE: {
+      const { fileId, content, saveVersion = false } = action.payload;
+      const existingFile = state.memoryFiles[fileId];
+      if (!existingFile) return state;
+      
+      // Always save a new version (content becomes the new current version)
+      const updatedFile = addVersion(existingFile, content, 'Manual edit');
+      
+      return {
+        ...state,
+        memoryFiles: {
+          ...state.memoryFiles,
+          [fileId]: updatedFile
         }
       };
     }
@@ -259,7 +297,7 @@ const appStateReducer = (state, action) => {
         openFolders: Array.isArray(action.payload) ? action.payload : [],
       };
       
-    case ACTION_TYPES.ADD_FOLDER:
+    case ACTION_TYPES.ADD_FOLDER: {
       // Ensure openFolders is an array
       const currentFolders = Array.isArray(state.openFolders) ? state.openFolders : [];
       const folderExists = currentFolders.some(folder => folder.id === action.payload.id);
@@ -270,16 +308,18 @@ const appStateReducer = (state, action) => {
         ...state,
         openFolders: [...currentFolders, action.payload],
       };
+    }
       
-    case ACTION_TYPES.REMOVE_FOLDER:
+    case ACTION_TYPES.REMOVE_FOLDER: {
       // Ensure openFolders is an array
       const foldersToFilter = Array.isArray(state.openFolders) ? state.openFolders : [];
       return {
         ...state,
         openFolders: foldersToFilter.filter(folder => folder.id !== action.payload),
       };
+    }
       
-    case ACTION_TYPES.RECONNECT_FOLDER:
+    case ACTION_TYPES.RECONNECT_FOLDER: {
       // Ensure openFolders is an array
       const foldersToReconnect = Array.isArray(state.openFolders) ? state.openFolders : [];
       return {
@@ -288,6 +328,7 @@ const appStateReducer = (state, action) => {
           folder.id === action.payload.folderId ? action.payload.folder : folder
         ),
       };
+    }
       
     case ACTION_TYPES.SET_EXPANDED_FOLDERS:
       return {
@@ -296,7 +337,7 @@ const appStateReducer = (state, action) => {
       };
     
     // Tab Management
-    case ACTION_TYPES.ADD_TAB:
+    case ACTION_TYPES.ADD_TAB: {
       const newTab = action.payload;
       const existingTabIndex = state.openTabs.findIndex(tab => tab.id === newTab.id);
       
@@ -317,8 +358,9 @@ const appStateReducer = (state, action) => {
           activeTabId: newTab.id,
         };
       }
+    }
       
-    case ACTION_TYPES.CLOSE_TAB:
+    case ACTION_TYPES.CLOSE_TAB: {
       const tabIdToClose = action.payload;
       const remainingTabs = state.openTabs.filter(tab => tab.id !== tabIdToClose);
       
@@ -335,6 +377,7 @@ const appStateReducer = (state, action) => {
         openTabs: remainingTabs,
         activeTabId: newActiveTabId,
       };
+    }
       
     case ACTION_TYPES.SET_ACTIVE_TAB:
       return {
@@ -359,7 +402,7 @@ const appStateReducer = (state, action) => {
         excelFiles: action.payload,
       };
       
-    case ACTION_TYPES.UPDATE_EXCEL_FILE:
+    case ACTION_TYPES.UPDATE_EXCEL_FILE: {
       const { fileId, data } = action.payload;
       return {
         ...state,
@@ -368,8 +411,9 @@ const appStateReducer = (state, action) => {
           [fileId]: data,
         },
       };
+    }
       
-    case ACTION_TYPES.SET_EXCEL_ACTIVE_SHEET:
+    case ACTION_TYPES.SET_EXCEL_ACTIVE_SHEET: {
       const { tabId, activeSheet, sheetNames } = action.payload;
       const existingFile = state.excelFiles[tabId] || {};
       return {
@@ -383,6 +427,7 @@ const appStateReducer = (state, action) => {
           },
         },
       };
+    }
       
     case ACTION_TYPES.CLEAR_EXCEL_DATA:
       return {
@@ -434,7 +479,7 @@ const appStateReducer = (state, action) => {
         },
       };
       
-    case ACTION_TYPES.TOGGLE_TERMINAL:
+    case ACTION_TYPES.TOGGLE_TERMINAL: {
       const newTerminalVisible = !state.isTerminalVisible;
       return {
         ...state,
@@ -447,6 +492,7 @@ const appStateReducer = (state, action) => {
             : state.panelSizes.bottomPanelHeight
         },
       };
+    }
       
     case ACTION_TYPES.SET_RESIZING:
       return {
@@ -456,7 +502,18 @@ const appStateReducer = (state, action) => {
 
     // SQL Generation Cases
     case ACTION_TYPES.START_SQL_GENERATION: {
-      const { generationId, sourceFile } = action.payload;
+      const { generationId, sourceFile, options = {} } = action.payload;
+      
+      // If we're working with an existing SQL file, prepare the context
+      let initialSqlContent = '';
+      let targetFileName = sourceFile;
+      
+      if (options.useExisting && options.fileData) {
+        // Use the existing file's content as starting point
+        initialSqlContent = options.fileData.codeData?.content || '';
+        targetFileName = options.fileData.name;
+      }
+      
       return {
         ...state,
         sqlGeneration: {
@@ -464,14 +521,18 @@ const appStateReducer = (state, action) => {
           isActive: true,
           generationId,
           currentStage: 'parsing-file',
-          sqlContent: '',
+          sqlContent: initialSqlContent,
           stageHistory: [],
           isPaused: false,
           currentQuestion: null,
           pausedAt: null,
           metadata: {
             ...state.sqlGeneration.metadata,
-            sourceFile
+            sourceFile,
+            targetFileName,
+            useExisting: options.useExisting || false,
+            existingFileData: options.fileData || null,
+            codeMentions: options.mentions || []
           }
         }
       };
@@ -510,7 +571,7 @@ const appStateReducer = (state, action) => {
 
     case ACTION_TYPES.COMPLETE_SQL_GENERATION: {
       const { finalSql } = action.payload;
-      return {
+      const newState = {
         ...state,
         sqlGeneration: {
           ...state.sqlGeneration,
@@ -521,6 +582,149 @@ const appStateReducer = (state, action) => {
           currentQuestion: null
         }
       };
+      
+      // ALWAYS close existing generated SQL files when completing SQL generation
+      const filteredTabs = state.openTabs.filter(tab => {
+        // Keep non-SQL tabs
+        const isLikelySQLTab = tab.name && tab.name.endsWith('.sql');
+        if (!isLikelySQLTab) return true;
+        
+        // For SQL tabs, be more aggressive about closing generated ones
+        const memoryFile = state.memoryFiles[tab.id];
+        if (memoryFile) {
+          // If it's a memory file, keep only user-modified ones
+          const shouldKeep = !memoryFile.isGenerated;
+          return shouldKeep;
+        } else {
+          // If no memory file, check if tab name suggests it's generated
+          const isGeneratedSQLTab = tab.name.startsWith('sql_') || 
+                                   tab.name.startsWith('generated-sql') ||
+                                   tab.name.includes('_gen_') ||
+                                   tab.name.includes('semantic_layer');
+          const shouldKeep = !isGeneratedSQLTab;
+          return shouldKeep;
+        }
+      });
+      
+      // Check if we need to update an existing file or create a new one
+      const { metadata } = state.sqlGeneration;
+      const sqlContent = finalSql || state.sqlGeneration.sqlContent;
+      
+      if (metadata.useExisting && metadata.existingFileData) {
+        // Update existing file with version history
+        const existingFileData = metadata.existingFileData;
+        const fileId = existingFileData.id || `memory-${existingFileData.name}`;
+        
+        // Find existing memory file
+        const existingMemoryFile = state.memoryFiles[fileId];
+        if (existingMemoryFile) {
+          // Add new version (becomes current version)
+          const updatedFile = addVersion(existingMemoryFile, sqlContent, "🤖 AI modification");
+          
+          newState.memoryFiles = {
+            ...state.memoryFiles,
+            [fileId]: updatedFile
+          };
+          
+          // Use filtered tabs and ensure existing file tab is active
+          newState.openTabs = filteredTabs.map(tab => 
+            tab.id === fileId ? { ...tab, isActive: true } : { ...tab, isActive: false }
+          );
+          
+          // If the tab was filtered out, add it back
+          const tabExists = filteredTabs.some(tab => tab.id === fileId);
+          if (!tabExists) {
+            newState.openTabs.push({
+              id: fileId,
+              name: existingFileData.name,
+              type: 'memory',
+              isActive: true
+            });
+          }
+          
+          newState.activeTabId = fileId;
+        } else {
+          // Create new memory file if it doesn't exist
+          const initialVersion = {
+            content: sqlContent,
+            timestamp: new Date(),
+            description: "🚀 Initial file generation",
+            generationId: metadata.generationId || 'initial'
+          };
+          
+          newState.memoryFiles = {
+            ...state.memoryFiles,
+            [fileId]: {
+              name: existingFileData.name,
+              type: 'sql',
+              isGenerated: true,
+              lastModified: new Date(),
+              versions: [initialVersion],
+              currentVersionIndex: 0
+            }
+          };
+          
+          // Use filtered tabs for new memory file too
+          newState.openTabs = [
+            ...filteredTabs,
+            {
+              id: fileId,
+              name: existingFileData.name,
+              type: 'memory',
+              isActive: true
+            }
+          ];
+          newState.activeTabId = fileId;
+        }
+      } else {
+        // Create new file as before (default behavior)
+        const timestamp = Date.now();
+        const fileName = `sql_${timestamp.toString().slice(-6)}.sql`; // Shorter name with last 6 digits
+        const fileId = `generated-sql-${timestamp}`;
+        
+        // Create initial version with the actual generated content
+        const initialVersion = {
+          content: sqlContent, // Use the actual generated content
+          timestamp: new Date(),
+          description: "🚀 Initial file generation",
+          generationId: metadata.generationId || 'initial'
+        };
+        
+        newState.memoryFiles = {
+          ...state.memoryFiles,
+          [fileId]: {
+            name: fileName,
+            type: 'sql',
+            isGenerated: true,
+            lastModified: new Date(),
+            versions: [initialVersion],
+            currentVersionIndex: 0
+          }
+        };
+        
+        // Add to open tabs using the filtered tabs from above
+        const existingTab = filteredTabs.find(tab => tab.id === fileId);
+        if (!existingTab) {
+          newState.openTabs = [
+            ...filteredTabs,
+            {
+              id: fileId,
+              name: fileName,
+              type: 'memory',
+              isActive: true
+            }
+          ];
+          newState.activeTabId = fileId;
+        } else {
+          // If tab exists, just make it active and use filtered tabs
+          newState.openTabs = filteredTabs.map(tab => 
+            tab.id === fileId ? { ...tab, isActive: true } : { ...tab, isActive: false }
+          );
+          newState.activeTabId = fileId;
+        }
+      }
+      
+      return newState;
     }
 
     case ACTION_TYPES.PAUSE_SQL_GENERATION: {
@@ -604,7 +808,57 @@ const appStateReducer = (state, action) => {
         }
       };
     }
-    
+
+    // Version management cases
+    case ACTION_TYPES.RESTORE_FILE_VERSION: {
+      const { fileId, versionIndex } = action.payload;
+      const file = state.memoryFiles[fileId];
+      
+      if (!file || !file.versions || versionIndex >= file.versions.length) {
+        return state;
+      }
+      
+      // Simply change the current version index to the selected version
+      return {
+        ...state,
+        memoryFiles: {
+          ...state.memoryFiles,
+          [fileId]: {
+            ...file,
+            currentVersionIndex: versionIndex,
+            lastModified: new Date()
+          }
+        }
+      };
+    }
+
+    case ACTION_TYPES.CLEAR_FILE_HISTORY: {
+      const { fileId } = action.payload;
+      const file = state.memoryFiles[fileId];
+      
+      if (!file) {
+        return state;
+      }
+      
+      // Keep only the current version
+      const currentVersion = file.versions[file.currentVersionIndex || 0];
+      if (!currentVersion) {
+        return state;
+      }
+      
+      return {
+        ...state,
+        memoryFiles: {
+          ...state.memoryFiles,
+          [fileId]: {
+            ...file,
+            versions: [currentVersion],
+            currentVersionIndex: 0
+          }
+        }
+      };
+    }
+
     default:
       return state;
   }
@@ -653,6 +907,12 @@ export const AppStateProvider = ({ children }) => {
       );
     },
     
+    // Version management actions
+    restoreFileVersion: (fileId, versionIndex) => 
+      dispatch({ type: ACTION_TYPES.RESTORE_FILE_VERSION, payload: { fileId, versionIndex } }),
+    clearFileHistory: (fileId) => 
+      dispatch({ type: ACTION_TYPES.CLEAR_FILE_HISTORY, payload: { fileId } }),
+    
     // Folder Actions
     setOpenFolders: (folders) => dispatch({ type: ACTION_TYPES.SET_OPEN_FOLDERS, payload: folders }),
     addFolder: (folder) => dispatch({ type: ACTION_TYPES.ADD_FOLDER, payload: folder }),
@@ -691,9 +951,9 @@ export const AppStateProvider = ({ children }) => {
     removeAttachment: (attachmentId) => dispatch({ type: ACTION_TYPES.REMOVE_ATTACHMENT, payload: attachmentId }),
     
     // SQL Generation Actions
-    startSqlGeneration: (generationId, sourceFile) => dispatch({ 
+    startSqlGeneration: (generationId, sourceFile, options = {}) => dispatch({ 
       type: ACTION_TYPES.START_SQL_GENERATION, 
-      payload: { generationId, sourceFile } 
+      payload: { generationId, sourceFile, options } 
     }),
     updateSqlStage: (stage, stageData, sqlContent) => dispatch({ 
       type: ACTION_TYPES.UPDATE_SQL_STAGE, 

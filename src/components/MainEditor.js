@@ -4,6 +4,7 @@ import { useAppState } from '../contexts/AppStateContext';
 import CustomScrollbar from './CustomScrollbar';
 import MonacoEditor from './MonacoEditor';
 import ExcelViewer from './ExcelViewer';
+import VersionHistory from './VersionHistory';
 import { FaDownload } from 'react-icons/fa';
 
 const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, ref) => {
@@ -22,7 +23,9 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     addMemoryFile,
     updateMemoryFile,
     saveMemoryFileToDisk,
-    removeMemoryFile
+    removeMemoryFile,
+    restoreFileVersion,
+    clearFileHistory
   } = actions;
   
   // CSS to hide textarea scrollbars
@@ -53,19 +56,50 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   // State for word wrap toggle
   const [wordWrap, setWordWrap] = useState(false);
   
+  // Version history state
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  
   const [dragOver, setDragOver] = useState(false);
   const dragTimeoutRef = useRef(null);
   const dragCounterRef = useRef(0);
   const saveTimeoutRef = useRef({});
 
+  // Helper function to get current content from memory file
+  const getCurrentMemoryFileContent = useCallback((fileId) => {
+    const memoryFile = memoryFiles[fileId];
+    if (!memoryFile || !memoryFile.versions || memoryFile.versions.length === 0) {
+      return '';
+    }
+    const currentIndex = memoryFile.currentVersionIndex || 0;
+    return memoryFile.versions[currentIndex]?.content || '';
+  }, [memoryFiles]);
+
+  // Sync memory file content with editor when versions are restored
+  useEffect(() => {
+    // Update file contents when memory files change (e.g., version restored)
+    Object.entries(memoryFiles).forEach(([fileId, fileData]) => {
+      setFileContents(prev => {
+        const currentContent = prev[fileId];
+        const memoryFileContent = getCurrentMemoryFileContent(fileId);
+        if (currentContent !== memoryFileContent) {
+          return {
+            ...prev,
+            [fileId]: memoryFileContent
+          };
+        }
+        return prev;
+      });
+    });
+  }, [memoryFiles, getCurrentMemoryFileContent]);
+
   // Get the active tab (moved here to avoid initialization order issues)
   const activeTab = openTabs.find(tab => tab.isActive);
 
   // Helper function to check if file is Excel
-  const isExcelFile = (fileName) => {
+  const isExcelFile = useCallback((fileName) => {
     const extension = fileName.split('.').pop()?.toLowerCase();
     return ['xlsx', 'xls', 'xlsm', 'xlsb'].includes(extension);
-  };
+  }, []);
 
   // Handle file rename by updating open tabs
   const handleFileRenamed = useCallback((oldName, newName, newHandle) => {
@@ -239,7 +273,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       });
 
       const writable = await fileHandle.createWritable();
-      await writable.write(memoryFile.content);
+      await writable.write(getCurrentMemoryFileContent(currentTab.fileId));
       await writable.close();
 
       // Mark as saved to disk
@@ -260,7 +294,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         console.error('Error saving memory file to disk:', error);
       }
     }
-  }, [openTabs, memoryFiles, saveMemoryFileToDisk, updateTabs]);
+  }, [openTabs, memoryFiles, saveMemoryFileToDisk, updateTabs, getCurrentMemoryFileContent]);
 
   const saveFileContent = useCallback(async (fileName, content) => {
     try {
@@ -443,6 +477,9 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       });
 
       // Auto-save to memory when generation is complete
+      // NOTE: This is now handled by AppStateContext COMPLETE_SQL_GENERATION action
+      // Commenting out to prevent duplicate file creation
+      /*
       if (sqlGeneration.currentStage === 'complete') {
         const fileName = `generated-sql-${sqlGeneration.generationId}.sql`;
         const memoryFileId = `sql_gen_${sqlGeneration.generationId}`;
@@ -475,6 +512,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
           }
         }
       }
+      */
     }
   }, [
     sqlGeneration.sqlContent, 
@@ -523,21 +561,22 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   useEffect(() => {
     if (activeTab?.isMemoryFile && activeTab?.fileId) {
       const memoryFile = memoryFiles[activeTab.fileId];
-      if (memoryFile && memoryFile.content) {
+      if (memoryFile && memoryFile.versions && memoryFile.versions.length > 0) {
+        const currentMemoryContent = getCurrentMemoryFileContent(activeTab.fileId);
         // Only update if content is different to prevent infinite loops
         setFileContents(prev => {
           const currentContent = prev[activeTab.id];
-          if (currentContent !== memoryFile.content) {
+          if (currentContent !== currentMemoryContent) {
             return {
               ...prev,
-              [activeTab.id]: memoryFile.content
+              [activeTab.id]: currentMemoryContent
             };
           }
           return prev; // Return same object to prevent unnecessary re-render
         });
       }
     }
-  }, [activeTab?.id, activeTab?.isMemoryFile, activeTab?.fileId, memoryFiles]);
+  }, [activeTab?.id, activeTab?.isMemoryFile, activeTab?.fileId, memoryFiles, getCurrentMemoryFileContent]);
 
   const openFileInTab = (fileName) => {
     // For simple filename-only cases, use filename as both identifier and name
@@ -818,7 +857,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   const memoizedExcelContent = useMemo(() => {
     const excelFile = activeTab && isExcelFile(activeTab.name) ? excelFiles[activeTab.id] : null;
     return excelFile?.content || null;
-  }, [activeTab, excelFiles]);
+  }, [activeTab, excelFiles, isExcelFile]);
 
   // Memoize Excel metadata (activeSheet, sheetNames)
   const memoizedExcelMeta = useMemo(() => {
@@ -827,7 +866,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       activeSheet: excelFile?.activeSheet,
       sheetNames: excelFile?.sheetNames
     };
-  }, [activeTab, excelFiles]);
+  }, [activeTab, excelFiles, isExcelFile]);
 
   // Handle Excel sheet changes
   const handleExcelSheetChange = useCallback((tabId, activeSheet, sheetNames) => {
@@ -847,7 +886,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       handle: memoizedFileHandle,
       tabId: activeTab.id
     };
-  }, [activeTab, memoizedFileHandle]);
+  }, [activeTab, memoizedFileHandle, isExcelFile]);
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -990,6 +1029,23 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
                 Download
               </button>
             )}
+            
+            {/* Version History button for memory files - Debug mode */}
+            {activeTab?.type === 'memory' && (
+              <button
+                onClick={() => setShowVersionHistory(true)}
+                className={`px-2 py-1 text-xs ${colors.textSecondary} hover:${colors.text} ${colors.border} rounded flex items-center gap-1`}
+                title={`View version history (${memoryFiles[activeTab.id]?.versions?.length || 0} versions) - Debug: ID=${activeTab.id}, Type=${activeTab.type}`}
+              >
+                <span className="text-xs">📝</span>
+                History
+                {memoryFiles[activeTab.id]?.versions?.length > 0 && (
+                  <span className="text-xs bg-blue-600 text-white rounded-full px-1 ml-1">
+                    {memoryFiles[activeTab.id].versions.length}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         )}
 
@@ -1090,7 +1146,10 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
               ) : activeTab ? (
                 <MonacoEditor
                   key={activeTab?.id} // Force re-render when tab changes
-                  value={fileContents[activeTab?.id] || ''}
+                  value={activeTab?.type === 'memory' 
+                    ? getCurrentMemoryFileContent(activeTab?.id) 
+                    : (fileContents[activeTab?.id] || '')
+                  }
                   onChange={(newValue) => handleContentChange(activeTab?.id, newValue)}
                   fileName={activeTab?.name}
                   onSave={(content) => saveFileContent(activeTab?.name, content)}
@@ -1101,6 +1160,26 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
           </div>
         )}
       </div>
+      
+      {/* Version History Modal */}
+      {showVersionHistory && activeTab?.type === 'memory' && memoryFiles[activeTab?.id] && (
+        <VersionHistory
+          fileId={activeTab.id}
+          fileName={activeTab.name}
+          versions={memoryFiles[activeTab.id].versions || []}
+          currentContent={(() => {
+            const memoryFile = memoryFiles[activeTab.id];
+            if (!memoryFile || !memoryFile.versions || memoryFile.versions.length === 0) {
+              return '';
+            }
+            const currentIndex = memoryFile.currentVersionIndex || 0;
+            return memoryFile.versions[currentIndex]?.content || '';
+          })()}
+          onRestoreVersion={restoreFileVersion}
+          onClearHistory={clearFileHistory}
+          onClose={() => setShowVersionHistory(false)}
+        />
+      )}
     </div>
   );
 });
