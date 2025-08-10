@@ -290,7 +290,26 @@ ORDER BY total_spent DESC;
   };
 
   // Mock data generator for testing streaming (new functionality)
-  const generateMockProgress = (generationId) => {
+  const generateMockProgress = (generationId, mentions = []) => {
+    // Check if there are @code mentions with SQL files
+    const codeMentions = mentions.filter(mention => mention.type === 'code');
+    const sqlFiles = codeMentions.filter(mention => 
+      mention.name.toLowerCase().endsWith('.sql') || 
+      mention.name.toLowerCase().includes('sql')
+    );
+    
+    // Determine the target file - use existing SQL file if mentioned, otherwise create new
+    let targetFileName = 'CustomerMapping.xlsx'; // Default fallback
+    let useExistingFile = false;
+    let targetSqlFile = null;
+    
+    if (sqlFiles.length > 0) {
+      // Use the first SQL file mentioned in @code
+      targetSqlFile = sqlFiles[0];
+      targetFileName = targetSqlFile.name;
+      useExistingFile = true;
+    }
+    
     const progressSteps = [
       { stage: "parsing-file", message: "Parsing file", progress: 12, description: "Reading CustomerMapping.xlsx file structure" },
       { stage: "analyzing", message: "Analyzing", progress: 25, description: "Found 47 column mappings in Customer_Data sheet" },
@@ -301,11 +320,19 @@ ORDER BY total_spent DESC;
       { stage: "generating-filters", message: "Generating filters", progress: 85, description: "Adding WHERE for active customers filter" },
       { stage: "generating-filters", message: "Generating filters", progress: 92, description: "Adding WHERE for date range filter" },
       { stage: "combining", message: "Combining", progress: 96, description: "Assembling final semantic layer structure" },
-      { stage: "complete", message: "Complete", progress: 100, description: "Semantic layer ready for review" }
+      { stage: "complete", message: "Complete", progress: 100, description: useExistingFile ? `Updated ${targetFileName}` : "Semantic layer ready for review" }
     ];
 
-    // Start SQL generation in context
-    startSqlGeneration(generationId, 'CustomerMapping.xlsx');
+    // Start SQL generation in context - pass info about target file
+    if (useExistingFile) {
+      startSqlGeneration(generationId, targetFileName, {
+        useExisting: true,
+        fileData: targetSqlFile,
+        mentions: codeMentions
+      });
+    } else {
+      startSqlGeneration(generationId, targetFileName);
+    }
 
     let stepIndex = 0;
     let currentProgressId = null;
@@ -315,7 +342,7 @@ ORDER BY total_spent DESC;
         const step = progressSteps[stepIndex];
         
         // Generate SQL for current stage
-        const sqlContent = buildSqlForStage(step.stage, 'CustomerMapping.xlsx');
+        const sqlContent = buildSqlForStage(step.stage, targetFileName);
         
         // Dispatch SQL update to context (for MainEditor)
         updateSqlStage(step.stage, { 
@@ -555,6 +582,15 @@ ORDER BY total_spent DESC;
   };
   
   // Helper function to get code content for a file
+  // Helper function to get current content from memory file
+  const getCurrentMemoryFileContent = (memoryFile) => {
+    if (!memoryFile || !memoryFile.versions || memoryFile.versions.length === 0) {
+      return '';
+    }
+    const currentIndex = memoryFile.currentVersionIndex || 0;
+    return memoryFile.versions[currentIndex]?.content || '';
+  };
+
   const getCodeContentForFile = (fileName) => {
     // First check if file is already open in tabs (from MainEditor)
     const openTab = openTabs.find(tab => tab.name === fileName);
@@ -562,14 +598,14 @@ ORDER BY total_spent DESC;
       // Get content from memory files or file system
       const memoryFileEntry = Object.entries(memoryFiles || {}).find(([id, file]) => file.name === fileName);
       if (memoryFileEntry) {
-        return memoryFileEntry[1].content;
+        return getCurrentMemoryFileContent(memoryFileEntry[1]);
       }
     }
     
     // If not in tabs, check memory files directly
     const memoryFileEntry = Object.entries(memoryFiles || {}).find(([id, file]) => file.name === fileName);
     if (memoryFileEntry) {
-      return memoryFileEntry[1].content;
+      return getCurrentMemoryFileContent(memoryFileEntry[1]);
     }
     
     // If not found, we'll need to open the file
@@ -820,10 +856,24 @@ ORDER BY total_spent DESC;
       
       // Add initial AI response
       setTimeout(() => {
+        // Check if there are @code mentions with SQL files
+        const codeMentions = selectedMentions.filter(mention => mention.type === 'code');
+        const sqlFiles = codeMentions.filter(mention => 
+          mention.name.toLowerCase().endsWith('.sql') || 
+          mention.name.toLowerCase().includes('sql')
+        );
+        
+        let responseContent = 'I\'ll help you generate the semantic layer. Let me analyze your mapping document and start the generation process.';
+        
+        if (sqlFiles.length > 0) {
+          const sqlFile = sqlFiles[0];
+          responseContent = `I'll help you modify the existing SQL file "${sqlFile.name}". Let me analyze the referenced code and update it based on your requirements.`;
+        }
+        
         const aiMessage = {
           id: `msg_${Date.now() + 1}`,
           type: 'ai',
-          content: 'I\'ll help you generate the semantic layer. Let me analyze your mapping document and start the generation process.',
+          content: responseContent,
           timestamp: new Date().toISOString(),
           generationId
         };
@@ -831,7 +881,7 @@ ORDER BY total_spent DESC;
         
         // Start mock progress after a brief delay
         setTimeout(() => {
-          generateMockProgress(generationId);
+          generateMockProgress(generationId, selectedMentions);
         }, 1000);
       }, 500);
       
