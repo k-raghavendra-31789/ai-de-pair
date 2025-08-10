@@ -124,7 +124,7 @@ const createInitialState = () => ({
   // UI State
   panelSizes: {
     leftPanelWidth: 250,
-    rightPanelWidth: 450, // Increased from 350 to 450 for larger ChatPanel
+    rightPanelWidth: 550, // Increased from 450 to 550 for even wider ChatPanel
     bottomPanelHeight: 0,
   },
   isTerminalVisible: false,
@@ -136,9 +136,6 @@ const initialState = createInitialState();
 
 // Reducer
 const appStateReducer = (state, action) => {
-  // console.log('AppState Reducer:', action.type, action.payload);
-  // console.log('Current openFolders count:', Array.isArray(state.openFolders) ? state.openFolders.length : 'not array');
-  
   switch (action.type) {
     // File Management
     case ACTION_TYPES.SET_SELECTED_FILE:

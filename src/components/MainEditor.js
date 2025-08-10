@@ -185,7 +185,6 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       URL.revokeObjectURL(url);
       
       // Show success message
-  // console.log(`Successfully downloaded: ${cleanFileName}`);
       
     } catch (error) {
       console.error('Error downloading file:', error);
@@ -604,7 +603,6 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   // Memoize Excel content to prevent unnecessary re-renders
   const memoizedExcelContent = useMemo(() => {
     const excelFile = activeTab && isExcelFile(activeTab.name) ? excelFiles[activeTab.id] : null;
-  // console.log('MainEditor: Memoized Excel content changed for tab:', activeTab?.id, 'has content:', !!excelFile?.content);
     return excelFile?.content || null;
   }, [activeTab?.id, excelFiles[activeTab?.id]?.content, activeTab?.name]); // More specific dependency
 
