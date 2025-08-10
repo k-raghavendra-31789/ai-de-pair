@@ -5,6 +5,10 @@ const ACTION_TYPES = {
   // File Management
   SET_SELECTED_FILE: 'SET_SELECTED_FILE',
   SET_AVAILABLE_FILES: 'SET_AVAILABLE_FILES',
+  ADD_MEMORY_FILE: 'ADD_MEMORY_FILE',
+  UPDATE_MEMORY_FILE: 'UPDATE_MEMORY_FILE',
+  REMOVE_MEMORY_FILE: 'REMOVE_MEMORY_FILE',
+  SAVE_MEMORY_FILE_TO_DISK: 'SAVE_MEMORY_FILE_TO_DISK',
   
   // Folder Management
   SET_OPEN_FOLDERS: 'SET_OPEN_FOLDERS',
@@ -31,6 +35,17 @@ const ACTION_TYPES = {
   SET_SELECTED_LLM: 'SET_SELECTED_LLM',
   ADD_ATTACHMENT: 'ADD_ATTACHMENT',
   REMOVE_ATTACHMENT: 'REMOVE_ATTACHMENT',
+  
+  // SQL Generation
+  START_SQL_GENERATION: 'START_SQL_GENERATION',
+  UPDATE_SQL_STAGE: 'UPDATE_SQL_STAGE',
+  UPDATE_SQL_CONTENT: 'UPDATE_SQL_CONTENT',
+  COMPLETE_SQL_GENERATION: 'COMPLETE_SQL_GENERATION',
+  RESET_SQL_GENERATION: 'RESET_SQL_GENERATION',
+  PAUSE_SQL_GENERATION: 'PAUSE_SQL_GENERATION',
+  ASK_USER_QUESTION: 'ASK_USER_QUESTION',
+  SUBMIT_USER_RESPONSE: 'SUBMIT_USER_RESPONSE',
+  RESUME_SQL_GENERATION: 'RESUME_SQL_GENERATION',
   
   // UI State
   SET_PANEL_SIZES: 'SET_PANEL_SIZES',
@@ -102,6 +117,7 @@ const createInitialState = () => ({
   // File State
   selectedFile: null,
   availableFiles: [],
+  memoryFiles: {}, // { fileId: { name: string, content: string, type: string, isGenerated: boolean, lastModified: Date } }
   
   // Folder State
   openFolders: loadFoldersFromStorage(),              // Load from localStorage
@@ -120,6 +136,29 @@ const createInitialState = () => ({
   chatMessages: [],
   selectedLLM: 'claude-sonnet-3.5',
   attachedDocuments: [],
+  
+  // SQL Generation State
+  sqlGeneration: {
+    isActive: false,
+    generationId: null,
+    currentStage: null,
+    sqlContent: '',
+    stageHistory: [],
+    isPaused: false,
+    currentQuestion: null,
+    questionHistory: [],
+    userResponses: {},
+    pausedAt: null,
+    pauseDuration: 0,
+    metadata: {
+      sourceFile: null,
+      tableStructure: {},
+      columnMappings: [],
+      joinDefinitions: [],
+      selectFields: [],
+      whereConditions: []
+    }
+  },
   
   // UI State
   panelSizes: {
@@ -149,6 +188,69 @@ const appStateReducer = (state, action) => {
         ...state,
         availableFiles: action.payload,
       };
+    
+    case ACTION_TYPES.ADD_MEMORY_FILE: {
+      const { fileId, name, content, type = 'text', isGenerated = false } = action.payload;
+      return {
+        ...state,
+        memoryFiles: {
+          ...state.memoryFiles,
+          [fileId]: {
+            name,
+            content,
+            type,
+            isGenerated,
+            lastModified: new Date(),
+          }
+        }
+      };
+    }
+    
+    case ACTION_TYPES.UPDATE_MEMORY_FILE: {
+      const { fileId, content } = action.payload;
+      const existingFile = state.memoryFiles[fileId];
+      if (!existingFile) return state;
+      
+      return {
+        ...state,
+        memoryFiles: {
+          ...state.memoryFiles,
+          [fileId]: {
+            ...existingFile,
+            content,
+            lastModified: new Date(),
+          }
+        }
+      };
+    }
+    
+    case ACTION_TYPES.REMOVE_MEMORY_FILE: {
+      const fileId = action.payload;
+      const { [fileId]: removed, ...remainingFiles } = state.memoryFiles;
+      return {
+        ...state,
+        memoryFiles: remainingFiles,
+      };
+    }
+    
+    case ACTION_TYPES.SAVE_MEMORY_FILE_TO_DISK: {
+      const { fileId } = action.payload;
+      const file = state.memoryFiles[fileId];
+      if (!file) return state;
+      
+      // Mark as no longer generated since it's been saved to disk
+      return {
+        ...state,
+        memoryFiles: {
+          ...state.memoryFiles,
+          [fileId]: {
+            ...file,
+            isGenerated: false,
+            lastModified: new Date(),
+          }
+        }
+      };
+    }
     
     // Folder Management
     case ACTION_TYPES.SET_OPEN_FOLDERS:
@@ -351,6 +453,157 @@ const appStateReducer = (state, action) => {
         ...state,
         isResizing: action.payload,
       };
+
+    // SQL Generation Cases
+    case ACTION_TYPES.START_SQL_GENERATION: {
+      const { generationId, sourceFile } = action.payload;
+      return {
+        ...state,
+        sqlGeneration: {
+          ...state.sqlGeneration,
+          isActive: true,
+          generationId,
+          currentStage: 'parsing-file',
+          sqlContent: '',
+          stageHistory: [],
+          isPaused: false,
+          currentQuestion: null,
+          pausedAt: null,
+          metadata: {
+            ...state.sqlGeneration.metadata,
+            sourceFile
+          }
+        }
+      };
+    }
+
+    case ACTION_TYPES.UPDATE_SQL_STAGE: {
+      const { stage, stageData, sqlContent } = action.payload;
+      return {
+        ...state,
+        sqlGeneration: {
+          ...state.sqlGeneration,
+          currentStage: stage,
+          sqlContent: sqlContent || state.sqlGeneration.sqlContent,
+          stageHistory: [...state.sqlGeneration.stageHistory, {
+            stage,
+            completedAt: Date.now(),
+            data: stageData
+          }],
+          metadata: {
+            ...state.sqlGeneration.metadata,
+            ...stageData
+          }
+        }
+      };
+    }
+
+    case ACTION_TYPES.UPDATE_SQL_CONTENT: {
+      return {
+        ...state,
+        sqlGeneration: {
+          ...state.sqlGeneration,
+          sqlContent: action.payload
+        }
+      };
+    }
+
+    case ACTION_TYPES.COMPLETE_SQL_GENERATION: {
+      const { finalSql } = action.payload;
+      return {
+        ...state,
+        sqlGeneration: {
+          ...state.sqlGeneration,
+          isActive: false,
+          currentStage: 'complete',
+          sqlContent: finalSql || state.sqlGeneration.sqlContent,
+          isPaused: false,
+          currentQuestion: null
+        }
+      };
+    }
+
+    case ACTION_TYPES.PAUSE_SQL_GENERATION: {
+      return {
+        ...state,
+        sqlGeneration: {
+          ...state.sqlGeneration,
+          isPaused: true,
+          pausedAt: Date.now()
+        }
+      };
+    }
+
+    case ACTION_TYPES.ASK_USER_QUESTION: {
+      const { question } = action.payload;
+      return {
+        ...state,
+        sqlGeneration: {
+          ...state.sqlGeneration,
+          isPaused: true,
+          currentQuestion: question,
+          pausedAt: Date.now(),
+          questionHistory: [...state.sqlGeneration.questionHistory, question]
+        }
+      };
+    }
+
+    case ACTION_TYPES.SUBMIT_USER_RESPONSE: {
+      const { questionId, response } = action.payload;
+      return {
+        ...state,
+        sqlGeneration: {
+          ...state.sqlGeneration,
+          userResponses: {
+            ...state.sqlGeneration.userResponses,
+            [questionId]: response
+          }
+        }
+      };
+    }
+
+    case ACTION_TYPES.RESUME_SQL_GENERATION: {
+      const pauseDuration = state.sqlGeneration.pausedAt 
+        ? Date.now() - state.sqlGeneration.pausedAt 
+        : 0;
+      return {
+        ...state,
+        sqlGeneration: {
+          ...state.sqlGeneration,
+          isPaused: false,
+          currentQuestion: null,
+          pausedAt: null,
+          pauseDuration: state.sqlGeneration.pauseDuration + pauseDuration
+        }
+      };
+    }
+
+    case ACTION_TYPES.RESET_SQL_GENERATION: {
+      return {
+        ...state,
+        sqlGeneration: {
+          isActive: false,
+          generationId: null,
+          currentStage: null,
+          sqlContent: '',
+          stageHistory: [],
+          isPaused: false,
+          currentQuestion: null,
+          questionHistory: [],
+          userResponses: {},
+          pausedAt: null,
+          pauseDuration: 0,
+          metadata: {
+            sourceFile: null,
+            tableStructure: {},
+            columnMappings: [],
+            joinDefinitions: [],
+            selectFields: [],
+            whereConditions: []
+          }
+        }
+      };
+    }
     
     default:
       return state;
@@ -379,6 +632,26 @@ export const AppStateProvider = ({ children }) => {
     // File Actions
     setSelectedFile: (file) => dispatch({ type: ACTION_TYPES.SET_SELECTED_FILE, payload: file }),
     setAvailableFiles: (files) => dispatch({ type: ACTION_TYPES.SET_AVAILABLE_FILES, payload: files }),
+    
+    // Memory File Actions
+    addMemoryFile: (fileId, name, content, type = 'text', isGenerated = false) => 
+      dispatch({ type: ACTION_TYPES.ADD_MEMORY_FILE, payload: { fileId, name, content, type, isGenerated } }),
+    updateMemoryFile: (fileId, content) => 
+      dispatch({ type: ACTION_TYPES.UPDATE_MEMORY_FILE, payload: { fileId, content } }),
+    removeMemoryFile: (fileId) => 
+      dispatch({ type: ACTION_TYPES.REMOVE_MEMORY_FILE, payload: fileId }),
+    saveMemoryFileToDisk: (fileId) => 
+      dispatch({ type: ACTION_TYPES.SAVE_MEMORY_FILE_TO_DISK, payload: { fileId } }),
+    clearGeneratedMemoryFiles: () => {
+      // Remove all generated memory files (keep user-modified ones)
+      const generatedFileIds = Object.entries(state.memoryFiles)
+        .filter(([_, file]) => file.isGenerated)
+        .map(([fileId, _]) => fileId);
+      
+      generatedFileIds.forEach(fileId => 
+        dispatch({ type: ACTION_TYPES.REMOVE_MEMORY_FILE, payload: fileId })
+      );
+    },
     
     // Folder Actions
     setOpenFolders: (folders) => dispatch({ type: ACTION_TYPES.SET_OPEN_FOLDERS, payload: folders }),
@@ -416,6 +689,35 @@ export const AppStateProvider = ({ children }) => {
     setSelectedLLM: (llm) => dispatch({ type: ACTION_TYPES.SET_SELECTED_LLM, payload: llm }),
     addAttachment: (attachment) => dispatch({ type: ACTION_TYPES.ADD_ATTACHMENT, payload: attachment }),
     removeAttachment: (attachmentId) => dispatch({ type: ACTION_TYPES.REMOVE_ATTACHMENT, payload: attachmentId }),
+    
+    // SQL Generation Actions
+    startSqlGeneration: (generationId, sourceFile) => dispatch({ 
+      type: ACTION_TYPES.START_SQL_GENERATION, 
+      payload: { generationId, sourceFile } 
+    }),
+    updateSqlStage: (stage, stageData, sqlContent) => dispatch({ 
+      type: ACTION_TYPES.UPDATE_SQL_STAGE, 
+      payload: { stage, stageData, sqlContent } 
+    }),
+    updateSqlContent: (sqlContent) => dispatch({ 
+      type: ACTION_TYPES.UPDATE_SQL_CONTENT, 
+      payload: sqlContent 
+    }),
+    completeSqlGeneration: (finalSql) => dispatch({ 
+      type: ACTION_TYPES.COMPLETE_SQL_GENERATION, 
+      payload: { finalSql } 
+    }),
+    pauseSqlGeneration: () => dispatch({ type: ACTION_TYPES.PAUSE_SQL_GENERATION }),
+    askUserQuestion: (question) => dispatch({ 
+      type: ACTION_TYPES.ASK_USER_QUESTION, 
+      payload: { question } 
+    }),
+    submitUserResponse: (questionId, response) => dispatch({ 
+      type: ACTION_TYPES.SUBMIT_USER_RESPONSE, 
+      payload: { questionId, response } 
+    }),
+    resumeSqlGeneration: () => dispatch({ type: ACTION_TYPES.RESUME_SQL_GENERATION }),
+    resetSqlGeneration: () => dispatch({ type: ACTION_TYPES.RESET_SQL_GENERATION }),
     
     // UI Actions
     setPanelSizes: (sizes) => dispatch({ type: ACTION_TYPES.SET_PANEL_SIZES, payload: sizes }),

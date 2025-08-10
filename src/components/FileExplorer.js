@@ -37,9 +37,9 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
   const { colors } = useTheme();
   const { state, actions } = useAppState();
   
-  // Get folder state from Context
-  const { openFolders, expandedFolders } = state;
-  const { setOpenFolders, setExpandedFolders, addFolder, removeFolder, reconnectFolder } = actions;
+  // Get folder state and memory files from Context
+  const { openFolders, expandedFolders, memoryFiles } = state;
+  const { setOpenFolders, setExpandedFolders, addFolder, removeFolder, reconnectFolder, addTab, removeMemoryFile } = actions;
   
   // Local UI state (non-persistent)
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
@@ -1824,6 +1824,16 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
             <FaFolder /> Local
           </button>
           <button
+            onClick={() => setActiveTab('memory')}
+            className={`px-3 py-1 text-xs transition-colors flex items-center gap-1 ${
+              activeTab === 'memory' 
+                ? `${colors.accent} border-b-2 border-blue-500` 
+                : `${colors.textMuted} hover:${colors.text}`
+            }`}
+          >
+            <FaDatabase /> Memory
+          </button>
+          <button
             onClick={() => setActiveTab('github')}
             className={`px-3 py-1 text-xs transition-colors flex items-center gap-1 ${
               activeTab === 'github' 
@@ -1854,6 +1864,23 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
               className={`px-2 py-1 text-xs rounded ${colors.accent} hover:opacity-80 disabled:opacity-50 transition-opacity flex-1`}
             >
               {isLoadingFiles ? (openFolders.length > 0 ? 'Refreshing...' : 'Loading...') : 'Open Folder'}
+            </button>
+          ) : activeTab === 'memory' ? (
+            <button
+              onClick={() => {
+                // Clear all memory files
+                Object.keys(memoryFiles).forEach(fileId => {
+                  removeMemoryFile(fileId);
+                });
+              }}
+              disabled={Object.keys(memoryFiles).length === 0}
+              className={`px-2 py-1 text-xs rounded ${
+                Object.keys(memoryFiles).length === 0 
+                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
+                  : 'bg-red-600 hover:bg-red-700 text-white'
+              } transition-colors flex-1`}
+            >
+              Clear All ({Object.keys(memoryFiles).length})
             </button>
           ) : activeTab === 'github' ? (
             <button
@@ -1899,6 +1926,67 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
                     Error: Folder data is corrupted. Please refresh and re-add folders.
                   </div>
                 )}
+              </div>
+            )
+          ) : activeTab === 'memory' ? (
+            // Memory Files Tab
+            Object.keys(memoryFiles).length === 0 ? (
+              <div className={`text-xs ${colors.textMuted} text-center py-4`}>
+                No files in memory yet.<br />
+                Generated SQL files will appear here automatically.
+                <div className="mt-3 text-xs">
+                  <strong>Features:</strong><br />
+                  • Generated files are saved to memory first<br />
+                  • Edit and enhance before saving to disk<br />
+                  • Files persist in your workspace<br />
+                </div>
+              </div>
+            ) : (
+              <div className={`${colors.textSecondary} space-y-1`}>
+                {Object.entries(memoryFiles).map(([fileId, file]) => (
+                  <div 
+                    key={fileId}
+                    className={`flex items-center py-1 px-2 rounded cursor-pointer transition-colors ${colors.hover} group`}
+                  >
+                    <div
+                      className="flex items-center flex-1"
+                      onClick={() => {
+                        // Open memory file in tab
+                        const tabId = `memory_${fileId}`;
+                        addTab({
+                          id: tabId,
+                          name: file.name,
+                          type: 'file',
+                          isActive: true,
+                          isDirty: false,
+                          isMemoryFile: true,
+                          fileId: fileId,
+                          content: file.content
+                        });
+                      }}
+                    >
+                      <span className={`w-4 h-4 mr-2 flex items-center justify-center text-xs ${file.isGenerated ? 'text-blue-400' : 'text-green-400'}`}>
+                        {file.type === 'sql' ? '🗃️' : '📄'}
+                      </span>
+                      <span className={`text-xs flex-1 ${colors.text}`}>
+                        {file.name}
+                      </span>
+                      <span className={`text-xs ${colors.textMuted} opacity-0 group-hover:opacity-100 transition-opacity mr-2`}>
+                        {file.isGenerated ? 'Generated' : 'Modified'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeMemoryFile(fileId);
+                      }}
+                      className={`w-4 h-4 rounded flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity ${colors.error} hover:bg-red-600`}
+                      title="Delete file"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
               </div>
             )
           ) : activeTab === 'github' ? (

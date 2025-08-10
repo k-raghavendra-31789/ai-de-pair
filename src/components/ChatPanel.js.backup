@@ -8,16 +8,13 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   const { colors } = useTheme();
   const { state, actions } = useAppState();
   
-  const { chatInput, selectedLLM, availableFiles, openTabs, excelFiles, sqlGeneration } = state;
-  const { 
-    setChatInput, 
-    setSelectedLLM, 
-    startSqlGeneration,
-    updateSqlStage,
-    updateSqlContent,
-    completeSqlGeneration,
-    resetSqlGeneration
-  } = actions;
+  const { chatInput, selectedLLM, availableFiles, openTabs, excelFiles } = state;
+  const { setChatInput, setSelectedLLM } = actions;
+  
+  // Chat Messages State
+  const [chatMessages, setChatMessages] = useState([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [activeGenerationId, setActiveGenerationId] = useState(null);
   
   // @mention detection state
   const [showMentionDropdown, setShowMentionDropdown] = useState(false);
@@ -28,15 +25,112 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   const [excelRowsDropdown, setExcelRowsDropdown] = useState(null); // Excel rows dropdown state
   const [selectedExcelFile, setSelectedExcelFile] = useState(null); // Currently selected Excel file for context
   const [toast, setToast] = useState(null); // Toast notification state
-  
-  // Chat Messages State (new - for streaming functionality)
-  const [chatMessages, setChatMessages] = useState([]);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [activeGenerationId, setActiveGenerationId] = useState(null);
-  
   const textareaRef = useRef(null);
   const messagesEndRef = useRef(null);
   
+  // Auto-scroll to bottom when new messages arrive
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [chatMessages]);
+
+  // Load chat messages from localStorage on component mount
+  useEffect(() => {
+    try {
+      const savedMessages = localStorage.getItem('ai-de-chat-messages');
+      if (savedMessages) {
+        const parsedMessages = JSON.parse(savedMessages);
+        setChatMessages(parsedMessages);
+      }
+    } catch (error) {
+      console.warn('Failed to load chat messages from localStorage:', error);
+    }
+  }, []);
+
+  // Save chat messages to localStorage whenever messages change
+  useEffect(() => {
+    try {
+      localStorage.setItem('ai-de-chat-messages', JSON.stringify(chatMessages));
+    } catch (error) {
+      console.warn('Failed to save chat messages to localStorage:', error);
+    }
+  }, [chatMessages]);
+
+  // Mock data generator for testing
+  const generateMockProgress = (generationId) => {
+    const progressSteps = [
+      { message: "🔄 Starting generation process...", progress: 10 },
+      { message: "📊 Parsing Excel mapping document...", progress: 25 },
+      { message: "🔍 Analyzing 47 column mappings in Sheet: Customer_Data", progress: 40 },
+      { message: "🏗️ Generating SELECT clause...", progress: 60 },
+      { message: "✅ SELECT clause complete", progress: 70 },
+      { message: "🔗 Building JOIN logic...", progress: 85 },
+      { message: "✅ JOIN logic complete", progress: 90 },
+      { message: "🎯 Adding WHERE conditions...", progress: 95 },
+      { message: "✅ Generation complete!", progress: 100 }
+    ];
+
+    let stepIndex = 0;
+    const interval = setInterval(() => {
+      if (stepIndex < progressSteps.length) {
+        const step = progressSteps[stepIndex];
+        
+        const progressMessage = {
+          id: `progress_${generationId}_${stepIndex}`,
+          type: 'progress',
+          content: step.message,
+          timestamp: new Date().toISOString(),
+          generationId,
+          metadata: {
+            progress: step.progress,
+            isStreaming: stepIndex < progressSteps.length - 1
+          }
+        };
+
+        setChatMessages(prev => [...prev, progressMessage]);
+        stepIndex++;
+      } else {
+        clearInterval(interval);
+        setIsStreaming(false);
+        setActiveGenerationId(null);
+        
+        // Add final SQL code block
+        setTimeout(() => {
+          const sqlCode = `-- Customer Semantic Layer
+SELECT 
+  c.customer_id,
+  c.customer_name,
+  c.email,
+  a.address_line1,
+  a.city,
+  a.state
+FROM raw.customers c
+LEFT JOIN raw.addresses a 
+  ON c.address_id = a.address_id
+WHERE c.is_active = 1
+  AND c.created_date >= '2023-01-01'`;
+
+          const codeMessage = {
+            id: `code_${generationId}`,
+            type: 'code',
+            content: sqlCode,
+            timestamp: new Date().toISOString(),
+            generationId,
+            metadata: {
+              blockType: 'complete_sql',
+              language: 'sql'
+            }
+          };
+
+          setChatMessages(prev => [...prev, codeMessage]);
+        }, 1000);
+      }
+    }, 1500);
+  };
+
   // Toast notification function
   const showToast = (message, type = 'warning') => {
     setToast({ message, type });
@@ -66,303 +160,6 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
       }
     };
   }, []);
-
-  // Chat message persistence and auto-scroll (new functionality)
-  useEffect(() => {
-    try {
-      const savedMessages = localStorage.getItem('ai-de-chat-messages');
-      if (savedMessages) {
-        const parsedMessages = JSON.parse(savedMessages);
-        setChatMessages(parsedMessages);
-      }
-    } catch (error) {
-      console.warn('Failed to load chat messages from localStorage:', error);
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('ai-de-chat-messages', JSON.stringify(chatMessages));
-    } catch (error) {
-      console.warn('Failed to save chat messages to localStorage:', error);
-    }
-  }, [chatMessages]);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [chatMessages]);
-
-  // SQL Building Functions for Progressive Generation
-  const buildSqlForStage = (stage, sourceFile) => {
-    const timestamp = new Date().toISOString();
-    
-    switch (stage) {
-      case 'parsing-file':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
--- Table Structure Discovery
--- Found tables: customers, addresses, orders
--- Processing sheet: Customer_Data`;
-
-      case 'analyzing':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
--- Column Mapping Analysis
--- customers table: customer_id, customer_name, email, address_id
--- addresses table: address_id, address_line1, city, state
--- orders table: order_id, customer_id, order_date, amount
-
--- Data type analysis in progress...`;
-
-      case 'generating-joins':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
--- Building JOIN relationships
-
-SELECT 
-  -- Fields will be added in next stage
-  
-FROM raw.customers c
-LEFT JOIN raw.addresses a 
-  ON c.address_id = a.address_id
-LEFT JOIN raw.orders o 
-  ON c.customer_id = o.customer_id`;
-
-      case 'generating-select':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
-SELECT 
-  -- Customer information
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  
-  -- Address information  
-  a.address_line1,
-  a.city,
-  a.state,
-  
-  -- Order aggregations
-  COUNT(o.order_id) as total_orders,
-  SUM(o.amount) as total_spent
-  
-FROM raw.customers c
-LEFT JOIN raw.addresses a 
-  ON c.address_id = a.address_id
-LEFT JOIN raw.orders o 
-  ON c.customer_id = o.customer_id`;
-
-      case 'generating-filters':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
-SELECT 
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  a.address_line1,
-  a.city,
-  a.state,
-  COUNT(o.order_id) as total_orders,
-  SUM(o.amount) as total_spent
-  
-FROM raw.customers c
-LEFT JOIN raw.addresses a 
-  ON c.address_id = a.address_id
-LEFT JOIN raw.orders o 
-  ON c.customer_id = o.customer_id
-
-WHERE c.is_active = 1
-  AND c.created_date >= '2023-01-01'
-  AND a.country = 'US'`;
-
-      case 'combining':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
-SELECT 
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  a.address_line1,
-  a.city,
-  a.state,
-  COUNT(o.order_id) as total_orders,
-  SUM(o.amount) as total_spent
-  
-FROM raw.customers c
-LEFT JOIN raw.addresses a 
-  ON c.address_id = a.address_id
-LEFT JOIN raw.orders o 
-  ON c.customer_id = o.customer_id
-
-WHERE c.is_active = 1
-  AND c.created_date >= '2023-01-01'
-  AND a.country = 'US'
-
-GROUP BY 
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  a.address_line1,
-  a.city,
-  a.state
-
-ORDER BY total_spent DESC;`;
-
-      case 'complete':
-        return `-- ===================================================
--- Customer Semantic Layer - FINAL
--- Generated by AI-DE from ${sourceFile || 'CustomerMapping.xlsx'}
--- Completion time: ${timestamp}
--- ===================================================
-
-SELECT 
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  a.address_line1,
-  a.city,
-  a.state,
-  COUNT(o.order_id) as total_orders,
-  SUM(o.amount) as total_spent
-  
-FROM raw.customers c
-LEFT JOIN raw.addresses a 
-  ON c.address_id = a.address_id
-LEFT JOIN raw.orders o 
-  ON c.customer_id = o.customer_id
-
-WHERE c.is_active = 1
-  AND c.created_date >= '2023-01-01'
-  AND a.country = 'US'
-
-GROUP BY 
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  a.address_line1,
-  a.city,
-  a.state
-
-ORDER BY total_spent DESC;
-
--- Performance Notes:
--- - Consider indexing on customer_id, address_id
--- - Review date filter performance
--- - Monitor JOIN performance on large datasets`;
-
-      default:
-        return '';
-    }
-  };
-
-  // Mock data generator for testing streaming (new functionality)
-  const generateMockProgress = (generationId) => {
-    const progressSteps = [
-      { stage: "parsing-file", message: "Parsing file", progress: 12, description: "Reading CustomerMapping.xlsx file structure" },
-      { stage: "analyzing", message: "Analyzing", progress: 25, description: "Found 47 column mappings in Customer_Data sheet" },
-      { stage: "generating-joins", message: "Generating joins", progress: 40, description: "Creating JOIN for customer_addresses table" },
-      { stage: "generating-joins", message: "Generating joins", progress: 50, description: "Creating JOIN for customer_orders table" },
-      { stage: "generating-select", message: "Generating select", progress: 65, description: "Adding SELECT for customer_id, customer_name attributes" },
-      { stage: "generating-select", message: "Generating select", progress: 72, description: "Adding SELECT for address, city, state attributes" },
-      { stage: "generating-filters", message: "Generating filters", progress: 85, description: "Adding WHERE for active customers filter" },
-      { stage: "generating-filters", message: "Generating filters", progress: 92, description: "Adding WHERE for date range filter" },
-      { stage: "combining", message: "Combining", progress: 96, description: "Assembling final semantic layer structure" },
-      { stage: "complete", message: "Complete", progress: 100, description: "Semantic layer ready for review" }
-    ];
-
-    // Start SQL generation in context
-    startSqlGeneration(generationId, 'CustomerMapping.xlsx');
-
-    let stepIndex = 0;
-    let currentProgressId = null;
-    
-    const interval = setInterval(() => {
-      if (stepIndex < progressSteps.length) {
-        const step = progressSteps[stepIndex];
-        
-        // Generate SQL for current stage
-        const sqlContent = buildSqlForStage(step.stage, 'CustomerMapping.xlsx');
-        
-        // Dispatch SQL update to context (for MainEditor)
-        updateSqlStage(step.stage, { 
-          description: step.description,
-          progress: step.progress 
-        }, sqlContent);
-        
-        // Update existing progress message or create new one (for ChatPanel UI)
-        if (currentProgressId) {
-          setChatMessages(prev => prev.map(msg => 
-            msg.id === currentProgressId 
-              ? {
-                  ...msg,
-                  content: step.description,
-                  metadata: {
-                    ...msg.metadata,
-                    progress: step.progress,
-                    currentStage: step.stage,
-                    stageMessage: step.message,
-                    isStreaming: stepIndex < progressSteps.length - 1
-                  }
-                }
-              : msg
-          ));
-        } else {
-          const progressMessage = {
-            id: `progress_${generationId}`,
-            type: 'progress',
-            content: step.description,
-            timestamp: new Date().toISOString(),
-            generationId,
-            metadata: {
-              progress: step.progress,
-              currentStage: step.stage,
-              stageMessage: step.message,
-              isStreaming: stepIndex < progressSteps.length - 1
-            }
-          };
-          setChatMessages(prev => [...prev, progressMessage]);
-          currentProgressId = progressMessage.id;
-        }
-        
-        stepIndex++;
-      } else {
-        clearInterval(interval);
-        setIsStreaming(false);
-        setActiveGenerationId(null);
-        
-        // Complete SQL generation in context
-        completeSqlGeneration();
-      }
-    }, 1200);
-  };
   
   // Helper function to get Excel data from AppState
   const getExcelDataForFile = (fileName) => {
@@ -613,7 +410,7 @@ ORDER BY total_spent DESC;
       // Generate unique generation ID
       const generationId = `gen_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
-      // Add user message to chat history
+      // Add user message to chat
       const userMessage = {
         id: `msg_${Date.now()}`,
         type: 'user',
@@ -654,7 +451,7 @@ ORDER BY total_spent DESC;
         }, 1000);
       }, 500);
       
-      // Clear input and mentions (existing logic)
+      // Clear input and mentions
       setChatInput('');
       setSelectedMentions([]);
     }
@@ -707,38 +504,9 @@ ORDER BY total_spent DESC;
     }
   }, [showMentionDropdown, excelRowsDropdown]);
 
-  const handleTextareaChange = (e) => {
-    const newValue = e.target.value;
-    const cursorPosition = e.target.selectionStart;
-    
-    setChatInput(newValue);
-    
-    // Auto-resize textarea
-    const textarea = e.target;
-    textarea.style.height = 'auto';
-    const newHeight = Math.min(Math.max(textarea.scrollHeight, 36), 150);
-    textarea.style.height = newHeight + 'px';
-    
-    // Check for @mention detection
-    const mention = detectMention(newValue, cursorPosition);
-    
-    if (mention) {
-      setMentionType(mention.type);
-      setMentionSuggestions(generateSuggestions(mention.type));
-      setShowMentionDropdown(true);
-      
-      // Calculate dropdown position (we'll improve this later)
-      const rect = textarea.getBoundingClientRect();
-      setDropdownPosition({
-        top: rect.bottom + 5,
-        left: rect.left
-      });
-    } else {
-      setShowMentionDropdown(false);
-    }
   };
 
-  // Message rendering functions for the new chat functionality
+  // Message rendering functions
   const renderUserMessage = (message) => (
     <div key={message.id} className="flex justify-end mb-4">
       <div className="max-w-[80%]">
@@ -778,131 +546,58 @@ ORDER BY total_spent DESC;
     </div>
   );
 
-  const renderProgressMessage = (message) => {
-    // Extract progress data
-    const progress = message.metadata?.progress || 0;
-    const currentStage = message.metadata?.currentStage;
-    const stageMessage = message.metadata?.stageMessage;
-    const isStreaming = message.metadata?.isStreaming;
-    
-    // Define workflow stages
-    const stages = [
-      { id: "parsing-file", label: "Parsing file" },
-      { id: "analyzing", label: "Analyzing" },
-      { id: "generating-joins", label: "Generating joins" },
-      { id: "generating-filters", label: "Generating filters" },
-      { id: "generating-select", label: "Generating select" },
-      { id: "combining", label: "Combining" },
-      { id: "complete", label: "Complete" }
-    ];
-    
-    const getStageStatus = (stageId) => {
-      if (currentStage === stageId) return 'active';
-      const currentIndex = stages.findIndex(s => s.id === currentStage);
-      const stageIndex = stages.findIndex(s => s.id === stageId);
-      if (currentIndex > stageIndex) return 'complete';
-      return 'pending';
-    };
-
-    return (
-      <div key={message.id} className="flex justify-start mb-3">
-        <div className="max-w-[90%] w-full border border-gray-600 rounded-lg p-3 bg-gray-800/50">
-          {/* Minimalist Progress Bar */}
-          <div className="mb-3">
-            {/* Stage indicators with alternating top/bottom labels */}
-            <div className="relative flex items-center justify-between mb-2 px-2 sm:px-4" style={{ height: '70px' }}>
-              {/* Background connection line - thicker */}
-              <div className="absolute top-1/2 left-4 right-4 sm:left-6 sm:right-6 h-0.5 bg-gray-600 transform -translate-y-1/2"></div>
-              
-              {stages.map((stage, index) => {
-                const status = getStageStatus(stage.id);
-                const stageNumber = index + 1;
-                const isTop = index % 2 === 0; // Alternate top/bottom
-                
-                return (
-                  <div key={stage.id} className="relative flex flex-col items-center z-10">
-                    {/* Label on top for even indices - more spacing */}
-                    {isTop && (
-                      <span className={`text-xs mb-3 text-white font-normal text-center leading-tight ${
-                        status === 'active' ? 'opacity-100' : 'opacity-60'
-                      }`}>
-                        {stage.label}
-                      </span>
-                    )}
-                    
-                    {/* Circle with number - green only for "complete" stage */}
-                    <div className={`w-4 h-4 rounded-full border transition-all duration-300 flex items-center justify-center text-xs font-medium ${
-                      status === 'complete' && stage.id === 'complete'
-                        ? 'bg-green-700 text-white border-green-500' 
-                        : status === 'complete' 
-                        ? 'bg-white text-gray-800 border-gray-300'
-                        : status === 'active'
-                        ? 'bg-blue-500 text-white border-blue-400'
-                        : 'bg-gray-500 text-white border-gray-400'
-                    }`}>
-                      {stageNumber}
-                    </div>
-                    
-                    {/* Label on bottom for odd indices - more spacing */}
-                    {!isTop && (
-                      <span className={`text-xs mt-3 text-white font-normal text-center leading-tight ${
-                        status === 'active' ? 'opacity-100' : 'opacity-60'
-                      }`}>
-                        {stage.label}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            
-            {/* Current stage message - top left aligned with underline */}
-            <div className="text-left px-2 mb-2">
-              <span className="text-white text-sm font-medium border-b border-gray-500 pb-1 inline-block">
-                {stageMessage || 'Processing...'}
-              </span>
-              {isStreaming && (
-                <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse mt-1 ml-2"></span>
-              )}
-            </div>
+  const renderProgressMessage = (message) => (
+    <div key={message.id} className="flex justify-start mb-2">
+      <div className="max-w-[85%]">
+        <div className={`${colors.warningBg} border ${colors.warningBorder} rounded-lg px-3 py-2`}>
+          <div className="flex items-center gap-2">
+            <div className={`text-sm ${colors.warning}`}>{message.content}</div>
+            {message.metadata?.isStreaming && (
+              <div className="w-4 h-4">
+                <div className={`w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin ${colors.warning}`}></div>
+              </div>
+            )}
           </div>
-          
-          {/* Description Box - responsive */}
-          <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg px-3 py-2`}>
-            <div className="text-white text-sm leading-relaxed">
-              {message.content}
+          {message.metadata?.progress && (
+            <div className="mt-2">
+              <div className={`w-full bg-gray-200 rounded-full h-1.5`}>
+                <div 
+                  className={`h-1.5 rounded-full transition-all duration-300 ${colors.warningBg}`}
+                  style={{ width: `${message.metadata.progress}%` }}
+                ></div>
+              </div>
+              <div className={`text-xs ${colors.warning} mt-1`}>
+                {message.metadata.progress}% complete
+              </div>
             </div>
-            <div className="text-gray-400 text-xs mt-1">
-              {progress}% • {new Date(message.timestamp).toLocaleTimeString()}
-            </div>
-          </div>
+          )}
+        </div>
+        <div className={`text-xs ${colors.textMuted} mt-1`}>
+          {new Date(message.timestamp).toLocaleTimeString()}
         </div>
       </div>
-    );
-  };
+    </div>
+  );
 
   const renderCodeMessage = (message) => (
     <div key={message.id} className="flex justify-start mb-4">
       <div className="max-w-[95%] w-full">
-        <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg overflow-hidden`}>
-          <div className={`flex items-center justify-between px-4 py-2 ${colors.secondary} border-b ${colors.borderLight}`}>
+        <div className={`bg-gray-900 border ${colors.borderLight} rounded-lg overflow-hidden`}>
+          <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
             <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${colors.successBg}`}></span>
-              <span className={`${colors.text} text-xs font-mono`}>
-                {message.metadata?.blockType?.replace('_', ' ').toUpperCase() || 'SQL'} 
+              <span className="text-green-400 text-xs">●</span>
+              <span className="text-gray-300 text-xs font-mono">
+                {message.metadata?.blockType || 'SQL'} 
               </span>
             </div>
             <button 
-              onClick={() => {
-                navigator.clipboard.writeText(message.content);
-                showToast('Code copied to clipboard!', 'success');
-              }}
-              className={`${colors.textSecondary} hover:${colors.text} text-xs px-2 py-1 rounded transition-colors`}
+              onClick={() => navigator.clipboard.writeText(message.content)}
+              className="text-gray-400 hover:text-white text-xs px-2 py-1 rounded transition-colors"
             >
               Copy
             </button>
           </div>
-          <pre className={`p-4 text-sm font-mono overflow-x-auto leading-relaxed ${colors.text}`}>
+          <pre className="p-4 text-sm text-gray-100 font-mono overflow-x-auto leading-relaxed">
             <code>{message.content}</code>
           </pre>
         </div>
@@ -928,23 +623,45 @@ ORDER BY total_spent DESC;
     }
   };
 
+  const handleTextareaChange = (e) => {
+    const newValue = e.target.value;
+    const cursorPosition = e.target.selectionStart;
+    
+    setChatInput(newValue);
+    
+    // Auto-resize textarea
+    const textarea = e.target;
+    textarea.style.height = 'auto';
+    const newHeight = Math.min(Math.max(textarea.scrollHeight, 36), 150);
+    textarea.style.height = newHeight + 'px';
+    
+    // Check for @mention detection
+    const mention = detectMention(newValue, cursorPosition);
+    
+    if (mention) {
+      setMentionType(mention.type);
+      setMentionSuggestions(generateSuggestions(mention.type));
+      setShowMentionDropdown(true);
+      
+      // Calculate dropdown position (we'll improve this later)
+      const rect = textarea.getBoundingClientRect();
+      setDropdownPosition({
+        top: rect.bottom + 5,
+        left: rect.left
+      });
+    } else {
+      setShowMentionDropdown(false);
+    }
+  };
+
   return (
     <div 
       className={`${colors.secondary} ${colors.border} border-l flex flex-col h-full`}
       style={{ width }}
     >
       {/* Chat Header */}
-      <div className={`p-4 ${colors.border} border-b flex items-center justify-between`}>
+      <div className={`p-4 ${colors.border} border-b`}>
         <h3 className={`text-sm font-medium ${colors.text}`}>CHAT</h3>
-        {chatMessages.length > 0 && (
-          <button
-            onClick={() => setChatMessages([])}
-            className={`text-xs ${colors.textSecondary} hover:${colors.text} px-2 py-1 rounded transition-colors`}
-            title="Clear chat history"
-          >
-            Clear
-          </button>
-        )}
       </div>
 
       {/* Chat Messages */}
@@ -955,7 +672,7 @@ ORDER BY total_spent DESC;
       >
         <div className="p-4 space-y-2 min-h-full">
           {chatMessages.length === 0 ? (
-            /* Original placeholder when no messages */
+            /* Placeholder when no messages */
             <div className="h-full flex items-center justify-center">
               <div className="text-center max-w-md">
                 <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${colors.tertiary}`}>
@@ -980,7 +697,7 @@ ORDER BY total_spent DESC;
               </div>
             </div>
           ) : (
-            /* Render actual messages when they exist */
+            /* Render actual messages */
             <>
               {chatMessages.map(message => renderMessage(message))}
               <div ref={messagesEndRef} />
@@ -1256,8 +973,6 @@ ORDER BY total_spent DESC;
                   ? 'bg-yellow-50 border-yellow-200 text-yellow-800 dark:bg-yellow-900 dark:border-yellow-700 dark:text-yellow-200'
                   : toast.type === 'error'
                   ? 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900 dark:border-red-700 dark:text-red-200'
-                  : toast.type === 'success'
-                  ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900 dark:border-green-700 dark:text-green-200'
                   : 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900 dark:border-blue-700 dark:text-blue-200'
               }`}
               style={{
