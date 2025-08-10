@@ -8,7 +8,7 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   const { colors } = useTheme();
   const { state, actions } = useAppState();
   
-  const { chatInput, selectedLLM, availableFiles, openTabs, excelFiles, sqlGeneration } = state;
+  const { chatInput, selectedLLM, availableFiles, openTabs, excelFiles, sqlGeneration, memoryFiles } = state;
   const { 
     setChatInput, 
     setSelectedLLM, 
@@ -556,10 +556,23 @@ ORDER BY total_spent DESC;
     // Get fresh files from FileExplorer
     const allFiles = getAllAvailableFiles ? getAllAvailableFiles() : (availableFiles || []);
     
+    // Get memory files (generated files like SQL) and convert them to the expected format
+    const memoryFilesList = Object.entries(memoryFiles || {}).map(([fileId, fileData]) => ({
+      name: fileData.name,
+      path: fileData.name, // Memory files don't have a traditional path, use name
+      source: 'memory',
+      isGitHub: false,
+      isCloud: false,
+      id: `memory-${fileId}`
+    }));
+    
+    // Combine file explorer files with memory files
+    const combinedFiles = [...allFiles, ...memoryFilesList];
+    
     switch (type) {
       case 'file':
-        // Return all files from FileExplorer
-        return allFiles.map(file => ({
+        // Return all files from FileExplorer and memory
+        return combinedFiles.map(file => ({
           name: file.name,
           path: file.path,
           source: file.source,
@@ -571,7 +584,7 @@ ORDER BY total_spent DESC;
         
       case 'context':
         // Filter to Excel/CSV files AND code files (.py, .sql, .ipynb, .dbc)
-        return allFiles
+        return combinedFiles
           .filter(file => {
             const ext = file.name.split('.').pop()?.toLowerCase();
             return ['xlsx', 'xls', 'xlsm', 'csv', 'py', 'sql', 'ipynb', 'dbc'].includes(ext);
@@ -588,7 +601,7 @@ ORDER BY total_spent DESC;
           
       case 'code':
         // Filter to code files: .py, .sql, .ipynb, .dbc
-        return allFiles
+        return combinedFiles
           .filter(file => {
             const ext = file.name.split('.').pop()?.toLowerCase();
             return ['py', 'sql', 'ipynb', 'dbc'].includes(ext);
@@ -742,7 +755,7 @@ ORDER BY total_spent DESC;
   const renderUserMessage = (message) => (
     <div key={message.id} className="flex justify-end mb-4">
       <div className="max-w-[80%]">
-        <div className={`${colors.accent} text-white rounded-lg px-4 py-2`}>
+        <div className={`${colors.accent} text-white border ${colors.borderLight} rounded-lg px-4 py-2`}>
           <div className="text-sm">{message.content}</div>
           {message.attachments && message.attachments.length > 0 && (
             <div className="mt-2 pt-2 border-t border-white border-opacity-20">
