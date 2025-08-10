@@ -38,10 +38,6 @@ const ExcelViewer = ({ file, fileContent, initialActiveSheet, sheetNames: propSh
         const savedColumnFilters = sessionStorage.getItem(`excelFilters_${storageKey}`);
         const savedMultiSelectFilters = sessionStorage.getItem(`excelMultiSelectFilters_${storageKey}`);
         
-        console.log('Loading filters for storageKey:', storageKey);
-        console.log('columnFilters:', savedColumnFilters);
-        console.log('multiSelectFilters:', savedMultiSelectFilters);
-        
         setColumnFilters(savedColumnFilters ? JSON.parse(savedColumnFilters) : {});
         setMultiSelectFilters(savedMultiSelectFilters ? JSON.parse(savedMultiSelectFilters) : {});
       } catch (error) {
@@ -61,7 +57,6 @@ const ExcelViewer = ({ file, fileContent, initialActiveSheet, sheetNames: propSh
   // Save filters to sessionStorage whenever they change
   useEffect(() => {
     try {
-      console.log('Saving columnFilters for', storageKey, ':', columnFilters);
       sessionStorage.setItem(`excelFilters_${storageKey}`, JSON.stringify(columnFilters));
     } catch (error) {
       console.warn('Failed to save filters to sessionStorage:', error);
@@ -70,7 +65,6 @@ const ExcelViewer = ({ file, fileContent, initialActiveSheet, sheetNames: propSh
 
   useEffect(() => {
     try {
-      console.log('Saving multiSelectFilters for', storageKey, ':', multiSelectFilters);
       sessionStorage.setItem(`excelMultiSelectFilters_${storageKey}`, JSON.stringify(multiSelectFilters));
     } catch (error) {
       console.warn('Failed to save multi-select filters to sessionStorage:', error);
@@ -83,16 +77,8 @@ const ExcelViewer = ({ file, fileContent, initialActiveSheet, sheetNames: propSh
     const hasFileNameChanged = prevFileNameRef.current !== file?.name;
     
     if (!hasContentChanged && !hasFileNameChanged) {
-      console.log('ExcelViewer: Skipping reload - no changes detected');
       return;
     }
-    
-    console.log('ExcelViewer: Content or file changed, reloading...', {
-      hasContentChanged,
-      hasFileNameChanged,
-      fileName: file?.name,
-      hasContent: !!fileContent
-    });
     
     prevFileContentRef.current = fileContent;
     prevFileNameRef.current = file?.name;
@@ -101,14 +87,6 @@ const ExcelViewer = ({ file, fileContent, initialActiveSheet, sheetNames: propSh
       try {
         setLoading(true);
         setError(null);
-
-        console.log('ExcelViewer Debug - useEffect triggered:', {
-          fileName: file?.name,
-          tabId: file?.tabId,
-          storageKey: storageKey,
-          hasFileContent: !!fileContent,
-          currentActiveSheet: activeSheet
-        });
 
         // Clear any old storage keys that might conflict (cleanup for existing sessions)
         if (file?.name && file?.tabId && file.name !== file.tabId) {

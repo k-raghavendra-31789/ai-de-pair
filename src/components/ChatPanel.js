@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useTheme } from './ThemeContext';
 import { useAppState } from '../contexts/AppStateContext';
 import CustomScrollbar from './CustomScrollbar';
+import * as XLSX from 'xlsx';
 
 const ChatPanel = ({ width, getAllAvailableFiles }) => {
   const { colors } = useTheme();
@@ -16,7 +17,96 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   const [mentionSuggestions, setMentionSuggestions] = useState([]);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
   const [selectedMentions, setSelectedMentions] = useState([]); // Array of selected files/mentions
+  const [excelRowsDropdown, setExcelRowsDropdown] = useState(null); // Excel rows dropdown state
+  const [selectedExcelFile, setSelectedExcelFile] = useState(null); // Currently selected Excel file for context
+  const [toast, setToast] = useState(null); // Toast notification state
   const textareaRef = useRef(null);
+  
+  // Toast notification function
+  const showToast = (message, type = 'warning') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000); // Auto-hide after 3 seconds
+  };
+  
+  // Add toast animation styles
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(-10px) scale(0.95);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+    `;
+    document.head.appendChild(style);
+    
+    return () => {
+      if (document.head.contains(style)) {
+        document.head.removeChild(style);
+      }
+    };
+  }, []);
+  
+  // Helper function to get Excel data from AppState
+  const getExcelDataForFile = (fileName) => {
+    try {
+      // First, find the tab that corresponds to this file name
+      const matchingTab = openTabs.find(tab => tab.name === fileName);
+      if (!matchingTab) {
+        return null;
+      }
+      
+      // Now get the Excel data using the tab ID
+      const fileData = excelFiles[matchingTab.id];
+      if (!fileData) {
+        return null;
+      }
+      
+      if (!fileData.content) {
+        return null;
+      }
+      
+      // Parse Excel content
+      const workbook = XLSX.read(fileData.content, { type: 'array' });
+      const sheetNames = workbook.SheetNames;
+      const sheetsData = {};
+      
+      // Process each sheet
+      sheetNames.forEach(sheetName => {
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+          header: 1, 
+          defval: '', 
+          raw: false 
+        });
+        
+        // Get header row and data rows
+        const headers = jsonData[0] || [];
+        const dataRows = jsonData.slice(1);
+        
+        sheetsData[sheetName] = {
+          headers,
+          rows: dataRows,
+          totalRows: dataRows.length
+        };
+      });
+      
+      return {
+        fileName,
+        tabId: matchingTab.id,
+        sheetNames,
+        sheetsData,
+        activeSheet: fileData.activeSheet || sheetNames[0]
+      };
+    } catch (error) {
+      return null;
+    }
+  };
   
   // @mention detection function
   const detectMention = (text, cursorPosition) => {
@@ -41,25 +131,28 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
 
   // Handle mention selection from dropdown
   const handleMentionSelect = (selectedFile) => {
+    // Check if this is a context mention with an Excel file
+    if (selectedFile.type === 'context' && isExcelFile(selectedFile.name)) {
+      // For Excel files in context mode, show Excel rows dropdown instead of adding directly
+      const excelData = getExcelDataForFile(selectedFile.name);
+      
+      if (excelData) {
+        setSelectedExcelFile(selectedFile);
+        setExcelRowsDropdown(excelData);
+        setShowMentionDropdown(false);
+        return;
+      }
+    }
+    
+    // Regular file mention handling
     // Check for duplicates
     const isDuplicate = selectedMentions.some(mention => 
       mention.name === selectedFile.name && mention.type === selectedFile.type
     );
     
     if (isDuplicate) {
-      // Subtle notification for duplicate
-      const tempAlert = document.createElement('div');
-      tempAlert.textContent = `"${selectedFile.name}" is already selected`;
-      tempAlert.className = 'fixed top-4 right-4 bg-yellow-100 border border-yellow-400 text-yellow-800 px-3 py-2 rounded text-sm z-[9999]';
-      document.body.appendChild(tempAlert);
-      
-      // Remove notification after 2 seconds
-      setTimeout(() => {
-        if (document.body.contains(tempAlert)) {
-          document.body.removeChild(tempAlert);
-        }
-      }, 2000);
-      
+      // Show toast notification for duplicate
+      showToast(`"${selectedFile.name}" is already selected`, 'warning');
       setShowMentionDropdown(false);
       return;
     }
@@ -100,6 +193,45 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
     }
     
     setShowMentionDropdown(false);
+  };
+  
+  // Helper function to check if file is Excel
+  const isExcelFile = (fileName) => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    return ['xlsx', 'xls', 'xlsm', 'xlsb'].includes(extension);
+  };
+  
+  // Handle Excel row selection
+  const handleExcelRowSelect = (rowData, rowIndex, sheetName) => {
+    const mention = {
+      id: `${selectedExcelFile.name}-${sheetName}-row${rowIndex}-${Date.now()}-${Math.random()}`,
+      name: selectedExcelFile.name,
+      path: selectedExcelFile.path,
+      type: 'context',
+      source: selectedExcelFile.source,
+      isGitHub: selectedExcelFile.isGitHub,
+      isCloud: selectedExcelFile.isCloud,
+      excelData: {
+        sheetName,
+        rowIndex,
+        rowData,
+        headers: excelRowsDropdown.sheetsData[sheetName].headers
+      }
+    };
+    
+    setSelectedMentions(prev => [...prev, mention]);
+    setExcelRowsDropdown(null);
+    setSelectedExcelFile(null);
+  };
+  
+  // Handle Excel sheet change in dropdown
+  const handleExcelSheetChange = (sheetName) => {
+    if (excelRowsDropdown) {
+      setExcelRowsDropdown({
+        ...excelRowsDropdown,
+        activeSheet: sheetName
+      });
+    }
   };
 
   // Remove a selected mention
@@ -181,7 +313,6 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
       };
       
       // Handle message sending logic here
-      console.log('Sending message with data:', messageData);
       
       // Clear input and mentions
       setChatInput('');
@@ -190,15 +321,25 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   };
 
   const handleKeyPress = (e) => {
-    if (e.key === 'Escape' && showMentionDropdown) {
-      setShowMentionDropdown(false);
-      return;
+    if (e.key === 'Escape') {
+      if (showMentionDropdown) {
+        setShowMentionDropdown(false);
+        return;
+      }
+      if (excelRowsDropdown) {
+        setExcelRowsDropdown(null);
+        setSelectedExcelFile(null);
+        return;
+      }
     }
     
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (showMentionDropdown) {
         setShowMentionDropdown(false);
+      } else if (excelRowsDropdown) {
+        setExcelRowsDropdown(null);
+        setSelectedExcelFile(null);
       } else {
         handleSendMessage();
       }
@@ -211,17 +352,20 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
       if (textareaRef.current && !textareaRef.current.contains(event.target)) {
         // Check if click is inside dropdown
         const dropdown = event.target.closest('[data-mention-dropdown]');
-        if (!dropdown) {
+        const excelDropdown = event.target.closest('[data-excel-dropdown]');
+        if (!dropdown && !excelDropdown) {
           setShowMentionDropdown(false);
+          setExcelRowsDropdown(null);
+          setSelectedExcelFile(null);
         }
       }
     };
 
-    if (showMentionDropdown) {
+    if (showMentionDropdown || excelRowsDropdown) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [showMentionDropdown]);
+  }, [showMentionDropdown, excelRowsDropdown]);
 
   const handleTextareaChange = (e) => {
     const newValue = e.target.value;
@@ -279,17 +423,18 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
               </svg>
             </div>
             <h3 className={`text-lg font-semibold ${colors.text} mb-2`}>
-              AI-Powered Development Assistant
+              AI-Powered Data Engineering Assistant
             </h3>
             <p className={`text-sm ${colors.textMuted} leading-relaxed mb-4`}>
-              Upload files, analyze Excel data, manage folders, and get AI assistance for your development tasks. 
-              Use @DocumentName to reference uploaded files in your conversations.
+              Bring your mapping document, explore your mapping document into File FileExplorer
+              and have our AI assistant help with developing your SQL , Pyspark , Python codes 
             </p>
             <div className={`text-xs ${colors.textSecondary} space-y-1`}>
-              <div>• Excel file analysis and visualization</div>
-              <div>• File and folder management with persistence</div>
-              <div>• Code generation and documentation</div>
-              <div>• Multi-model AI assistance</div>
+              <div>• Type @file to attach files</div>
+              <div>• Type @context to attach rows of Excel / Csv </div>
+              <div>• Type @code to attach your existing code </div>
+              <div>• Drag and drop your files into MainEditor</div>
+              <div>• AutoFormat your sql </div>
             </div>
           </div>
         </div>
@@ -305,23 +450,27 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
                 {selectedMentions.map((mention) => (
                   <div
                     key={mention.id}
-                    className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${colors.accent} border ${colors.border}`}
+                    className={`inline-flex items-center px-2 py-1 rounded text-xs ${colors.text} ${colors.tertiary} border ${colors.border}`}
                     style={{
-                      fontStyle: 'italic',
-                      background: 'rgba(30, 41, 59, 0.85)', // dark slate with opacity
-                      color: 'inherit',
-                      marginRight: '0.4rem',
-                      marginBottom: '0.2rem',
-                      transition: 'background 0.2s'
+                      fontSize: '11px',
+                      maxWidth: '280px'
                     }}
                   >
-                    <span style={{ whiteSpace: 'nowrap' }}>
-                      @{mention.type}[{mention.name}]
+                    <span 
+                      className="truncate"
+                      title={mention.excelData ? 
+                        `@context[${mention.name}:${mention.excelData.sheetName}:Row${mention.excelData.rowIndex + 1}]` :
+                        `@${mention.type}[${mention.name}]`
+                      }
+                    >
+                      {mention.excelData ? 
+                        `@context[${mention.name}:${mention.excelData.sheetName}:Row${mention.excelData.rowIndex + 1}]` :
+                        `@${mention.type}[${mention.name}]`
+                      }
                     </span>
                     <button
                       onClick={() => removeMention(mention.id)}
-                      className="ml-2 hover:bg-gray-300 rounded-full w-4 h-4 flex items-center justify-center text-xs font-bold"
-                      style={{ color: 'inherit', background: 'none', border: 'none', padding: 0, marginLeft: 6, cursor: 'pointer' }}
+                      className={`ml-2 ${colors.textMuted} hover:${colors.text} rounded w-4 h-4 flex items-center justify-center text-xs`}
                     >
                       ×
                     </button>
@@ -382,7 +531,7 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
                   disabled={!chatInput.trim() && selectedMentions.length === 0}
                   className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
                     (chatInput.trim() || selectedMentions.length > 0)
-                      ? `${colors.accent} hover:opacity-80 text-white` 
+                      ? `${colors.accentBg} hover:opacity-80 text-white` 
                       : `${colors.quaternary} ${colors.textMuted} cursor-not-allowed`
                   }`}
                 >
@@ -442,6 +591,138 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
                 No {mentionType} files found
               </div>
             )}
+          </div>
+        )}
+        
+        {/* Excel rows dropdown */}
+        {excelRowsDropdown && (
+          <div 
+            data-excel-dropdown="true"
+            className={`absolute z-50 ${colors.secondary} ${colors.border} border rounded-lg shadow-lg mt-1 min-w-[400px] max-h-[400px] overflow-hidden`}
+            style={{
+              top: 'auto',
+              bottom: '100%',
+              left: '1rem',
+              marginBottom: '0.5rem'
+            }}
+          >
+            {/* Header */}
+            <div className={`p-3 text-sm ${colors.text} border-b ${colors.borderLight}`}>
+              <div className="font-medium">Select data from: {excelRowsDropdown.fileName}</div>
+              <div className={`text-xs ${colors.textMuted} mt-1`}>
+                Choose sheet and row to include in context
+              </div>
+            </div>
+            
+            {/* Sheet tabs */}
+            <div className={`flex ${colors.tertiary} border-b ${colors.borderLight} overflow-x-auto`}>
+              {excelRowsDropdown.sheetNames.map((sheetName, index) => (
+                <button
+                  key={sheetName}
+                  onClick={() => handleExcelSheetChange(sheetName)}
+                  className={`px-3 py-2 text-xs font-medium whitespace-nowrap border-r ${colors.borderLight} last:border-r-0 ${
+                    sheetName === excelRowsDropdown.activeSheet
+                      ? `${colors.accent} ${colors.secondary}`
+                      : `${colors.textSecondary} hover:${colors.text} hover:${colors.hover}`
+                  }`}
+                >
+                  {sheetName}
+                </button>
+              ))}
+            </div>
+            
+            {/* Data rows */}
+            <div className="max-h-[250px] overflow-y-auto">
+              {(() => {
+                const currentSheet = excelRowsDropdown.sheetsData[excelRowsDropdown.activeSheet];
+                if (!currentSheet || !currentSheet.rows || currentSheet.rows.length === 0) {
+                  return (
+                    <div className={`p-4 text-sm ${colors.textMuted} text-center`}>
+                      No data found in this sheet
+                    </div>
+                  );
+                }
+                
+                const { headers, rows } = currentSheet;
+                return (
+                  <>
+                    {/* Show all data rows */}
+                    {rows.map((row, rowIndex) => (
+                      <div 
+                        key={rowIndex}
+                        className={`p-3 border-b ${colors.borderLight} last:border-b-0 hover:${colors.hover} cursor-pointer`}
+                        onClick={() => handleExcelRowSelect(row, rowIndex, excelRowsDropdown.activeSheet)}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className={`text-xs font-medium ${colors.textMuted}`}>Row {rowIndex + 1}</span>
+                          <span className={`text-xs ${colors.accent}`}>Click to select</span>
+                        </div>
+                        
+                        {/* Show row data as key-value pairs */}
+                        <div className="space-y-1">
+                          {row.map((cell, cellIndex) => {
+                            const header = headers[cellIndex] || `Column ${cellIndex + 1}`;
+                            if (!cell && cell !== 0) return null; // Skip empty cells
+                            
+                            return (
+                              <div key={cellIndex} className="flex">
+                                <span className={`text-xs ${colors.textSecondary} min-w-[100px] mr-2 font-medium`}>
+                                  {header}:
+                                </span>
+                                <span className={`text-xs ${colors.text} flex-1`}>
+                                  {cell}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                );
+              })()}
+            </div>
+            
+            {/* Footer */}
+            <div className={`p-2 ${colors.tertiary} border-t ${colors.borderLight} flex justify-end`}>
+              <button
+                onClick={() => {
+                  setExcelRowsDropdown(null);
+                  setSelectedExcelFile(null);
+                }}
+                className={`px-3 py-1 text-xs ${colors.textSecondary} hover:${colors.text}`}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+        
+        {/* Toast Notification */}
+        {toast && (
+          <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-[10000]">
+            <div 
+              className={`mx-4 px-4 py-3 rounded-lg shadow-lg border text-sm font-medium max-w-sm pointer-events-auto animate-fade-in ${
+                toast.type === 'warning' 
+                  ? 'bg-yellow-50 border-yellow-200 text-yellow-800 dark:bg-yellow-900 dark:border-yellow-700 dark:text-yellow-200'
+                  : toast.type === 'error'
+                  ? 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900 dark:border-red-700 dark:text-red-200'
+                  : 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900 dark:border-blue-700 dark:text-blue-200'
+              }`}
+              style={{
+                animation: 'fadeIn 0.3s ease-out'
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span>{toast.message}</span>
+                <button
+                  onClick={() => setToast(null)}
+                  className="ml-3 text-current opacity-70 hover:opacity-100 transition-opacity"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
