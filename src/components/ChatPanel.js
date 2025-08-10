@@ -16,7 +16,9 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
     updateSqlStage,
     updateSqlContent,
     completeSqlGeneration,
-    resetSqlGeneration
+    resetSqlGeneration,
+    addTab,
+    setActiveTab
   } = actions;
   
   // @mention detection state
@@ -27,6 +29,10 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   const [selectedMentions, setSelectedMentions] = useState([]); // Array of selected files/mentions
   const [excelRowsDropdown, setExcelRowsDropdown] = useState(null); // Excel rows dropdown state
   const [selectedExcelFile, setSelectedExcelFile] = useState(null); // Currently selected Excel file for context
+  const [codeLinesDropdown, setCodeLinesDropdown] = useState(null); // Code lines dropdown state
+  const [selectedCodeFile, setSelectedCodeFile] = useState(null); // Currently selected code file for line selection
+  const [selectedLines, setSelectedLines] = useState([]); // Array of selected line numbers
+  const [lastSelectedLine, setLastSelectedLine] = useState(null); // For range selection with shift+click
   const [toast, setToast] = useState(null); // Toast notification state
   
   // Chat Messages State (new - for streaming functionality)
@@ -456,6 +462,35 @@ ORDER BY total_spent DESC;
       }
     }
     
+    // Check if this is a code mention with a code file
+    if (selectedFile.type === 'code' && isCodeFile(selectedFile.name)) {
+      // Ensure the file is open in MainEditor first
+      const tabId = ensureFileIsOpen(selectedFile);
+      
+      // Get the code content
+      const codeContent = getCodeContentForFile(selectedFile.name);
+      
+      if (codeContent) {
+        const lines = codeContent.split('\n');
+        setSelectedCodeFile(selectedFile);
+        setCodeLinesDropdown({
+          fileName: selectedFile.name,
+          lines: lines,
+          tabId: tabId
+        });
+        // Reset line selection state
+        setSelectedLines([]);
+        setLastSelectedLine(null);
+        setShowMentionDropdown(false);
+        return;
+      } else {
+        // Show toast if content couldn't be loaded
+        showToast(`Could not load content for "${selectedFile.name}". Make sure the file is accessible.`, 'error');
+        setShowMentionDropdown(false);
+        return;
+      }
+    }
+    
     // Regular file mention handling
     // Check for duplicates
     const isDuplicate = selectedMentions.some(mention => 
@@ -513,6 +548,58 @@ ORDER BY total_spent DESC;
     return ['xlsx', 'xls', 'xlsm', 'xlsb'].includes(extension);
   };
   
+  // Helper function to check if file is a code file
+  const isCodeFile = (fileName) => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    return ['py', 'sql', 'ipynb', 'dbc', 'js', 'ts', 'jsx', 'tsx', 'java', 'cpp', 'c', 'cs', 'php', 'rb', 'go'].includes(extension);
+  };
+  
+  // Helper function to get code content for a file
+  const getCodeContentForFile = (fileName) => {
+    // First check if file is already open in tabs (from MainEditor)
+    const openTab = openTabs.find(tab => tab.name === fileName);
+    if (openTab) {
+      // Get content from memory files or file system
+      const memoryFileEntry = Object.entries(memoryFiles || {}).find(([id, file]) => file.name === fileName);
+      if (memoryFileEntry) {
+        return memoryFileEntry[1].content;
+      }
+    }
+    
+    // If not in tabs, check memory files directly
+    const memoryFileEntry = Object.entries(memoryFiles || {}).find(([id, file]) => file.name === fileName);
+    if (memoryFileEntry) {
+      return memoryFileEntry[1].content;
+    }
+    
+    // If not found, we'll need to open the file
+    return null;
+  };
+  
+  // Helper function to ensure file is open in MainEditor
+  const ensureFileIsOpen = (selectedFile) => {
+    // Check if file is already open
+    const existingTab = openTabs.find(tab => tab.name === selectedFile.name);
+    if (existingTab) {
+      // File is already open, just set it as active
+      setActiveTab(existingTab.id);
+      return existingTab.id;
+    }
+    
+    // File is not open, need to open it
+    const newTabId = `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    addTab({
+      id: newTabId,
+      name: selectedFile.name,
+      path: selectedFile.path,
+      source: selectedFile.source,
+      isGitHub: selectedFile.isGitHub,
+      isCloud: selectedFile.isCloud
+    });
+    setActiveTab(newTabId);
+    return newTabId;
+  };
+  
   // Handle Excel row selection
   const handleExcelRowSelect = (rowData, rowIndex, sheetName) => {
     const mention = {
@@ -534,6 +621,86 @@ ORDER BY total_spent DESC;
     setSelectedMentions(prev => [...prev, mention]);
     setExcelRowsDropdown(null);
     setSelectedExcelFile(null);
+  };
+  
+  // Handle code line selection
+  const handleCodeLineSelect = (startLine, endLine, lines) => {
+    const selectedLines = lines.slice(startLine - 1, endLine);
+    const mention = {
+      id: `${selectedCodeFile.name}-lines${startLine}-${endLine}-${Date.now()}-${Math.random()}`,
+      name: selectedCodeFile.name,
+      path: selectedCodeFile.path,
+      type: 'code',
+      source: selectedCodeFile.source,
+      isGitHub: selectedCodeFile.isGitHub,
+      isCloud: selectedCodeFile.isCloud,
+      codeData: {
+        startLine,
+        endLine,
+        content: selectedLines.join('\n'),
+        totalLines: lines.length
+      }
+    };
+    
+    setSelectedMentions(prev => [...prev, mention]);
+    
+    // Remove the @code text from input and close dropdown
+    const textarea = textareaRef.current;
+    if (textarea) {
+      const text = textarea.value;
+      const cursorPosition = textarea.selectionStart;
+      const beforeCursor = text.substring(0, cursorPosition);
+      const afterCursor = text.substring(cursorPosition);
+      
+      // Find and remove the @code pattern
+      const mentionMatch = beforeCursor.match(/@code$/);
+      if (mentionMatch) {
+        const newText = beforeCursor.substring(0, mentionMatch.index) + afterCursor;
+        setChatInput(newText);
+        
+        // Set cursor position after the replacement
+        setTimeout(() => {
+          textarea.focus();
+          textarea.setSelectionRange(mentionMatch.index, mentionMatch.index);
+        }, 0);
+      }
+    }
+    
+    setCodeLinesDropdown(null);
+    setSelectedCodeFile(null);
+    setSelectedLines([]);
+    setLastSelectedLine(null);
+  };
+  
+  // Handle individual line click with range selection support
+  const handleLineClick = (lineNumber, event) => {
+    const lines = codeLinesDropdown.lines;
+    
+    if (event.shiftKey && lastSelectedLine !== null) {
+      // Range selection with Shift+click
+      const start = Math.min(lastSelectedLine, lineNumber);
+      const end = Math.max(lastSelectedLine, lineNumber);
+      const range = [];
+      for (let i = start; i <= end; i++) {
+        range.push(i);
+      }
+      setSelectedLines(range);
+    } else {
+      // Single line selection
+      setSelectedLines([lineNumber]);
+      setLastSelectedLine(lineNumber);
+    }
+  };
+  
+  // Confirm line selection and create mention
+  const confirmLineSelection = () => {
+    if (selectedLines.length === 0) return;
+    
+    const lines = codeLinesDropdown.lines;
+    const startLine = Math.min(...selectedLines);
+    const endLine = Math.max(...selectedLines);
+    
+    handleCodeLineSelect(startLine, endLine, lines);
   };
   
   // Handle Excel sheet change in dropdown
@@ -634,13 +801,14 @@ ORDER BY total_spent DESC;
         timestamp: new Date().toISOString(),
         generationId,
         attachments: selectedMentions.map(mention => ({
-          fileType: mention.type,
+          type: mention.type,
           name: mention.name,
           path: mention.path,
           source: mention.source,
           isGitHub: mention.isGitHub,
           isCloud: mention.isCloud,
-          excelData: mention.excelData || null
+          excelData: mention.excelData || null,
+          codeData: mention.codeData || null
         }))
       };
       
@@ -693,6 +861,9 @@ ORDER BY total_spent DESC;
       } else if (excelRowsDropdown) {
         setExcelRowsDropdown(null);
         setSelectedExcelFile(null);
+      } else if (codeLinesDropdown) {
+        setCodeLinesDropdown(null);
+        setSelectedCodeFile(null);
       } else {
         handleSendMessage();
       }
@@ -706,19 +877,22 @@ ORDER BY total_spent DESC;
         // Check if click is inside dropdown
         const dropdown = event.target.closest('[data-mention-dropdown]');
         const excelDropdown = event.target.closest('[data-excel-dropdown]');
-        if (!dropdown && !excelDropdown) {
+        const codeDropdown = event.target.closest('[data-code-dropdown]');
+        if (!dropdown && !excelDropdown && !codeDropdown) {
           setShowMentionDropdown(false);
           setExcelRowsDropdown(null);
           setSelectedExcelFile(null);
+          setCodeLinesDropdown(null);
+          setSelectedCodeFile(null);
         }
       }
     };
 
-    if (showMentionDropdown || excelRowsDropdown) {
+    if (showMentionDropdown || excelRowsDropdown || codeLinesDropdown) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [showMentionDropdown, excelRowsDropdown]);
+  }, [showMentionDropdown, excelRowsDropdown, codeLinesDropdown]);
 
   const handleTextareaChange = (e) => {
     const newValue = e.target.value;
@@ -764,7 +938,9 @@ ORDER BY total_spent DESC;
                 <div key={idx} className="text-xs opacity-75 truncate">
                   {attachment.excelData ? 
                     `@context[${attachment.name}:${attachment.excelData.sheetName}:Row${attachment.excelData.rowIndex + 1}]` :
-                    `@${attachment.fileType}[${attachment.name}]`
+                    attachment.codeData ?
+                    `@code[${attachment.name}:line${attachment.codeData.startLine === attachment.codeData.endLine ? '' : 's'} ${attachment.codeData.startLine === attachment.codeData.endLine ? attachment.codeData.startLine : `${attachment.codeData.startLine}-${attachment.codeData.endLine}`}]` :
+                    `@${attachment.type}[${attachment.name}]`
                   }
                 </div>
               ))}
@@ -1022,11 +1198,15 @@ ORDER BY total_spent DESC;
                       className="truncate"
                       title={mention.excelData ? 
                         `@context[${mention.name}:${mention.excelData.sheetName}:Row${mention.excelData.rowIndex + 1}]` :
+                        mention.codeData ?
+                        `@code[${mention.name}:line${mention.codeData.startLine === mention.codeData.endLine ? '' : 's'} ${mention.codeData.startLine === mention.codeData.endLine ? mention.codeData.startLine : `${mention.codeData.startLine}-${mention.codeData.endLine}`}]` :
                         `@${mention.type}[${mention.name}]`
                       }
                     >
                       {mention.excelData ? 
                         `@context[${mention.name}:${mention.excelData.sheetName}:Row${mention.excelData.rowIndex + 1}]` :
+                        mention.codeData ?
+                        `@code[${mention.name}:line${mention.codeData.startLine === mention.codeData.endLine ? '' : 's'} ${mention.codeData.startLine === mention.codeData.endLine ? mention.codeData.startLine : `${mention.codeData.startLine}-${mention.codeData.endLine}`}]` :
                         `@${mention.type}[${mention.name}]`
                       }
                     </span>
@@ -1116,14 +1296,14 @@ ORDER BY total_spent DESC;
               marginBottom: '0.5rem'
             }}
           >
-            <div className={`p-2 text-xs ${colors.textSecondary} border-b ${colors.borderLight}`}>
+            <div className={`p-2 text-xs text-white border-b ${colors.borderLight}`}>
               @{mentionType} suggestions ({mentionSuggestions.length} files):
             </div>
             {mentionSuggestions.length > 0 ? (
               mentionSuggestions.map((suggestion, index) => (
                 <div 
                   key={suggestion.id || index}
-                  className={`p-2 text-sm ${colors.text} hover:${colors.hover} cursor-pointer border-b ${colors.borderLight} last:border-b-0`}
+                  className={`p-2 text-sm text-white hover:${colors.hover} cursor-pointer border-b ${colors.borderLight} last:border-b-0`}
                   onMouseDown={(e) => {
                     e.preventDefault(); // Prevent textarea from losing focus
                     handleMentionSelect(suggestion);
@@ -1136,20 +1316,20 @@ ORDER BY total_spent DESC;
                 >
                   <div className="flex items-center justify-between">
                     <span className="truncate flex-1">{suggestion.name}</span>
-                    <span className={`text-xs ${colors.textMuted} ml-2`}>
+                    <span className={`text-xs text-white ml-2`}>
                       {suggestion.source === 'github' ? '📁' : 
                        suggestion.source === 'cloud' ? '☁️' : '💻'}
                     </span>
                   </div>
                   {suggestion.path !== suggestion.name && (
-                    <div className={`text-xs ${colors.textMuted} truncate mt-1`}>
+                    <div className={`text-xs text-white truncate mt-1`}>
                       {suggestion.path}
                     </div>
                   )}
                 </div>
               ))
             ) : (
-              <div className={`p-3 text-sm ${colors.textMuted} text-center`}>
+              <div className={`p-3 text-sm text-white text-center`}>
                 No {mentionType} files found
               </div>
             )}
@@ -1256,6 +1436,116 @@ ORDER BY total_spent DESC;
               >
                 Cancel
               </button>
+            </div>
+          </div>
+        )}
+        
+        {/* Code lines dropdown */}
+        {codeLinesDropdown && (
+          <div 
+            data-code-dropdown="true"
+            className={`absolute z-50 ${colors.secondary} ${colors.border} border rounded-lg shadow-lg mt-1 min-w-[500px] max-h-[400px] overflow-hidden`}
+            style={{
+              top: 'auto',
+              bottom: '100%',
+              left: '1rem',
+              marginBottom: '0.5rem'
+            }}
+          >
+            {/* Header */}
+            <div className={`p-2 text-xs border-b ${colors.borderLight}`}>
+              <div className="font-medium text-white">Select lines from: {codeLinesDropdown.fileName}</div>
+              <div className={`text-xs text-white mt-1`}>
+                Click lines to select • Shift+click for ranges • {selectedLines.length} selected
+              </div>
+            </div>
+            
+            {/* Code lines */}
+            <div className="max-h-[280px] overflow-y-auto">
+              {(() => {
+                const lines = codeLinesDropdown.lines;
+                if (!lines || lines.length === 0) {
+                  return (
+                    <div className={`p-3 text-xs text-white text-center`}>
+                      No content found in this file
+                    </div>
+                  );
+                }
+                
+                return (
+                  <>
+                    {lines.map((line, lineIndex) => {
+                      const lineNumber = lineIndex + 1;
+                      const isSelected = selectedLines.includes(lineNumber);
+                      
+                      return (
+                        <div 
+                          key={lineIndex}
+                          className={`px-2 py-1 border-b ${colors.borderLight} last:border-b-0 cursor-pointer flex items-center ${
+                            isSelected 
+                              ? `${colors.secondary} border-l-2 ${colors.border}` 
+                              : `hover:${colors.hover}`
+                          }`}
+                          onClick={(e) => handleLineClick(lineNumber, e)}
+                        >
+                          <div className="flex items-center justify-between w-full">
+                            <div className="flex items-center flex-1 min-w-0">
+                              <span className={`text-xs min-w-[35px] mr-2 font-mono text-right ${
+                                isSelected ? 'text-white' : 'text-white'
+                              }`}>
+                                {lineNumber}
+                              </span>
+                              <span className={`text-xs font-mono flex-1 truncate text-white`}>
+                                {line || ' '}
+                              </span>
+                            </div>
+                            {isSelected && (
+                              <span className={`text-xs text-white ml-2`}>
+                                •
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                );
+              })()}
+            </div>
+            
+            {/* Footer with action buttons */}
+            <div className={`p-2 ${colors.tertiary} border-t ${colors.borderLight} flex justify-between items-center`}>
+              <div className={`text-xs text-white`}>
+                {selectedLines.length > 0 && (
+                  <span>
+                    Line{selectedLines.length > 1 ? 's' : ''} {Math.min(...selectedLines)}{selectedLines.length > 1 ? `-${Math.max(...selectedLines)}` : ''}
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setCodeLinesDropdown(null);
+                    setSelectedCodeFile(null);
+                    setSelectedLines([]);
+                    setLastSelectedLine(null);
+                  }}
+                  className={`px-2 py-1 text-xs text-white hover:text-gray-300 rounded`}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmLineSelection}
+                  disabled={selectedLines.length === 0}
+                  className={`px-2 py-1 text-xs rounded ${
+                    selectedLines.length === 0 
+                      ? `text-gray-500 cursor-not-allowed` 
+                      : `text-white ${colors.secondary} border ${colors.borderLight} hover:${colors.hover}`
+                  }`}
+                >
+                  Add Lines
+                </button>
+              </div>
             </div>
           </div>
         )}
