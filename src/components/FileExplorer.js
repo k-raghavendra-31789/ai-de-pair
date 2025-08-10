@@ -37,9 +37,9 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
   const { colors } = useTheme();
   const { state, actions } = useAppState();
   
-  // Get folder state from Context
-  const { openFolders, expandedFolders } = state;
-  const { setOpenFolders, setExpandedFolders, addFolder, removeFolder, reconnectFolder } = actions;
+  // Get folder state and memory files from Context
+  const { openFolders, expandedFolders, memoryFiles } = state;
+  const { setOpenFolders, setExpandedFolders, addFolder, removeFolder, reconnectFolder, addTab, removeMemoryFile } = actions;
   
   // Local UI state (non-persistent)
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
@@ -75,16 +75,47 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
   const [cloudFiles, setCloudFiles] = useState([]);
   
   const [activeTab, setActiveTab] = useState('local'); // 'local', 'github', or 'cloud'
+  
+  // Toast notification state
+  const [toast, setToast] = useState(null);
+  
+  // Toast notification function
+  const showToast = (message, type = 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000); // Auto-hide after 4 seconds (slightly longer for errors)
+  };
+  
+  // Add toast animation styles
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fadeInSlide {
+        from {
+          opacity: 0;
+          transform: translateY(-10px) scale(0.95);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+    `;
+    document.head.appendChild(style);
+    
+    return () => {
+      if (document.head.contains(style)) {
+        document.head.removeChild(style);
+      }
+    };
+  }, []);
 
   // Helper function to restore file handles for persisted folders
   const restoreFileHandles = useCallback(async () => {
     // This function will be called on component mount to help users reconnect
     // folders that were persisted but lost their file handles
     if (openFolders.length > 0) {
-  // console.log('Current openFolders:', openFolders);
       const foldersWithoutHandles = openFolders.filter(folder => !folder.handle);
       if (foldersWithoutHandles.length > 0) {
-  // console.log(`Found ${foldersWithoutHandles.length} folders without file handles. These will need to be reconnected.`);
         // You could show a notification here asking users to reconnect folders
       }
     }
@@ -240,7 +271,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
     } catch (error) {
       console.error(`Error authenticating with ${provider}:`, error);
       const providerConfig = cloudProviders.find(p => p.id === provider);
-      alert(`Failed to connect to ${providerConfig?.name || provider}: ${error.message}`);
+      showToast(`Failed to connect to ${providerConfig?.name || provider}: ${error.message}`, 'error');
     } finally {
       setIsLoadingCloud(false);
     }
@@ -530,18 +561,18 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
 
   const fetchSingleGitHubFile = async () => {
     if (!gitHubRepoUrl.trim()) {
-      alert('Please enter a GitHub repository URL');
+      showToast('Please enter a GitHub repository URL', 'warning');
       return;
     }
 
     if (!gitHubFilePath.trim()) {
-      alert('Please enter a file path');
+      showToast('Please enter a file path', 'warning');
       return;
     }
 
     const repoInfo = parseGitHubUrl(gitHubRepoUrl);
     if (!repoInfo) {
-      alert('Invalid GitHub repository URL. Please use format: https://github.com/owner/repo');
+      showToast('Invalid GitHub repository URL. Please use format: https://github.com/owner/repo', 'error');
       return;
     }
 
@@ -601,7 +632,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
           item.branch === gitHubBranch
         );
         if (existing) {
-          alert('This file is already open');
+          showToast('This file is already open', 'warning');
           return prev;
         }
         return [...prev, gitHubFile];
@@ -615,7 +646,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       
     } catch (error) {
       console.error('Error fetching GitHub file:', error);
-      alert(`Error fetching file: ${error.message}`);
+      showToast(`Error fetching file: ${error.message}`, 'error');
     } finally {
       setIsLoadingGitHub(false);
     }
@@ -623,13 +654,13 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
 
   const fetchGitHubRepo = async () => {
     if (!gitHubRepoUrl.trim()) {
-      alert('Please enter a GitHub repository URL');
+      showToast('Please enter a GitHub repository URL', 'error');
       return;
     }
 
     const repoInfo = parseGitHubUrl(gitHubRepoUrl);
     if (!repoInfo) {
-      alert('Invalid GitHub repository URL. Please use format: https://github.com/owner/repo');
+      showToast('Invalid GitHub repository URL. Please use format: https://github.com/owner/repo', 'error');
       return;
     }
 
@@ -685,7 +716,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
           repo.repoInfo.repo === repoInfo.repo
         );
         if (existing) {
-          alert('This repository is already open');
+          showToast('This repository is already open', 'info');
           return prev;
         }
         return [...prev, gitHubFolder];
@@ -701,7 +732,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       
     } catch (error) {
       console.error('Error fetching GitHub repository:', error);
-      alert(`Error fetching repository: ${error.message}`);
+      showToast(`Error fetching repository: ${error.message}`, 'error');
     } finally {
       setIsLoadingGitHub(false);
     }
@@ -773,7 +804,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       );
     } catch (error) {
       console.error('Error loading GitHub folder children:', error);
-      alert(`Error loading folder: ${error.message}`);
+      showToast(`Error loading folder: ${error.message}`, 'error');
     }
   };
 
@@ -797,10 +828,9 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
     try {
       // In a real implementation, this would call the respective cloud provider APIs
       // For now, most folders are already loaded with mock data
-  // console.log(`Loading cloud folder children for ${provider}: ${folderPath}`);
     } catch (error) {
       console.error('Error loading cloud folder children:', error);
-      alert(`Error loading folder: ${error.message}`);
+      showToast(`Error loading folder: ${error.message}`, 'error');
     }
   };
 
@@ -854,12 +884,12 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
         reconnectFolder(folderId, folderStructure);
         
       } else {
-        alert('Your browser does not support the File System Access API.');
+        showToast('Your browser does not support the File System Access API.', 'error');
       }
     } catch (error) {
       if (error.name !== 'AbortError') {
         console.error('Error reconnecting folder:', error);
-        alert('Failed to reconnect folder. Please try again.');
+        showToast('Failed to reconnect folder. Please try again.', 'error');
       }
     } finally {
       setIsLoadingFiles(false);
@@ -876,7 +906,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
         // Check if folder already exists
         const existingFolder = openFolders.find(folder => folder.name === dirHandle.name);
         if (existingFolder) {
-          alert('This folder is already open in the workspace.');
+          showToast('This folder is already open in the workspace.', 'warning');
           return;
         }
         
@@ -891,12 +921,12 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
         setExpandedFolders(newExpandedFolders);
         
       } else {
-        alert('Your browser does not support the File System Access API. Please use a modern browser like Chrome or Edge.');
+        showToast('Your browser does not support the File System Access API. Please use a modern browser like Chrome or Edge.', 'error');
       }
     } catch (error) {
       if (error.name !== 'AbortError') {
         console.error('Error selecting folder:', error);
-        alert('Error accessing folder. Please try again.');
+        showToast('Error accessing folder. Please try again.', 'error');
       }
     } finally {
       setIsLoadingFiles(false);
@@ -940,7 +970,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       
     } catch (error) {
       console.error('Error refreshing workspace:', error);
-      alert('Error refreshing workspace. Please try again.');
+      showToast('Error refreshing workspace. Please try again.', 'error');
     } finally {
       setIsLoadingFiles(false);
     }
@@ -949,12 +979,12 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
   // Create a new file in the selected folder
   const createFile = async () => {
     if (!newFileName.trim()) {
-      alert('Please enter a file name.');
+      showToast('Please enter a file name.', 'warning');
       return;
     }
 
     if (!selectedFolderForNewFile) {
-      alert('Please select a folder first.');
+      showToast('Please select a folder first.', 'warning');
       return;
     }
 
@@ -982,7 +1012,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
 
     } catch (error) {
       console.error('Error creating file:', error);
-      alert('Error creating file. Please check folder permissions and try again.');
+      showToast('Error creating file. Please check folder permissions and try again.', 'error');
     }
   };
 
@@ -995,12 +1025,12 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
   // Rename a file
   const renameFile = async () => {
     if (!newName.trim()) {
-      alert('Please enter a new name.');
+      showToast('Please enter a new name.', 'warning');
       return;
     }
 
     if (!renamingFile) {
-      alert('No file selected for renaming.');
+      showToast('No file selected for renaming.', 'warning');
       return;
     }
 
@@ -1009,7 +1039,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       const parentFolder = findParentFolder(renamingFile.id);
       
       if (!parentFolder) {
-        alert('Could not find parent folder.');
+        showToast('Could not find parent folder.', 'error');
         return;
       }
 
@@ -1044,14 +1074,14 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
 
     } catch (error) {
       console.error('Error renaming file:', error);
-      alert('Error renaming file. Please check permissions and try again.');
+      showToast('Error renaming file. Please check permissions and try again.', 'error');
     }
   };
 
   // Delete a file
   const deleteFile = async () => {
     if (!deletingFile) {
-      alert('No file selected for deletion.');
+      showToast('No file selected for deletion.', 'warning');
       return;
     }
 
@@ -1059,7 +1089,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       const parentFolder = findParentFolder(deletingFile.id);
       
       if (!parentFolder) {
-        alert('Could not find parent folder.');
+        showToast('Could not find parent folder.', 'error');
         return;
       }
 
@@ -1080,7 +1110,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
 
     } catch (error) {
       console.error('Error deleting file:', error);
-      alert('Error deleting file. Please check permissions and try again.');
+      showToast('Error deleting file. Please check permissions and try again.', 'error');
     }
   };
 
@@ -1201,11 +1231,9 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       // Clean up
       URL.revokeObjectURL(url);
       
-  // console.log(`Successfully downloaded: ${cleanFileName}`);
-      
     } catch (error) {
       console.error('Error downloading file:', error);
-      alert(`Failed to download file: ${error.message}`);
+      showToast(`Failed to download file: ${error.message}`, 'error');
     }
   };
 
@@ -1325,9 +1353,6 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
 
   // Toggle folder expansion (enhanced for GitHub and Cloud)
   const toggleFolder = async (folderId, folderHandle, isLoaded, isGitHub = false, folderPath = '', repoInfo = null, isCloud = false, cloudProvider = '') => {
-  // console.log('toggleFolder called:', { folderId, folderHandle: !!folderHandle, isLoaded, isGitHub, isCloud });
-  // console.log('Current openFolders before toggle:', openFolders);
-    
     const isExpanded = expandedFolders.has(folderId);
     
     if (!isExpanded) {
@@ -1340,7 +1365,6 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       
       // Expanding - load children if not already loaded
       if (!isLoaded) {
-  // console.log('Loading children for folder:', folderId);
         if (isGitHub && repoInfo) {
           await loadGitHubFolderChildren(folderId, folderPath, repoInfo);
         } else if (isCloud && cloudProvider) {
@@ -1357,8 +1381,6 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       newExpandedFolders.delete(folderId);
       setExpandedFolders(newExpandedFolders);
     }
-    
-  // console.log('Current openFolders after toggle:', openFolders);
   };
 
   // Handle file drag start (enhanced for GitHub and Cloud)
@@ -1802,6 +1824,16 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
             <FaFolder /> Local
           </button>
           <button
+            onClick={() => setActiveTab('memory')}
+            className={`px-3 py-1 text-xs transition-colors flex items-center gap-1 ${
+              activeTab === 'memory' 
+                ? `${colors.accent} border-b-2 border-blue-500` 
+                : `${colors.textMuted} hover:${colors.text}`
+            }`}
+          >
+            <FaDatabase /> Memory
+          </button>
+          <button
             onClick={() => setActiveTab('github')}
             className={`px-3 py-1 text-xs transition-colors flex items-center gap-1 ${
               activeTab === 'github' 
@@ -1832,6 +1864,23 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
               className={`px-2 py-1 text-xs rounded ${colors.accent} hover:opacity-80 disabled:opacity-50 transition-opacity flex-1`}
             >
               {isLoadingFiles ? (openFolders.length > 0 ? 'Refreshing...' : 'Loading...') : 'Open Folder'}
+            </button>
+          ) : activeTab === 'memory' ? (
+            <button
+              onClick={() => {
+                // Clear all memory files
+                Object.keys(memoryFiles).forEach(fileId => {
+                  removeMemoryFile(fileId);
+                });
+              }}
+              disabled={Object.keys(memoryFiles).length === 0}
+              className={`px-2 py-1 text-xs rounded ${
+                Object.keys(memoryFiles).length === 0 
+                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
+                  : 'bg-red-600 hover:bg-red-700 text-white'
+              } transition-colors flex-1`}
+            >
+              Clear All ({Object.keys(memoryFiles).length})
             </button>
           ) : activeTab === 'github' ? (
             <button
@@ -1877,6 +1926,67 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
                     Error: Folder data is corrupted. Please refresh and re-add folders.
                   </div>
                 )}
+              </div>
+            )
+          ) : activeTab === 'memory' ? (
+            // Memory Files Tab
+            Object.keys(memoryFiles).length === 0 ? (
+              <div className={`text-xs ${colors.textMuted} text-center py-4`}>
+                No files in memory yet.<br />
+                Generated SQL files will appear here automatically.
+                <div className="mt-3 text-xs">
+                  <strong>Features:</strong><br />
+                  • Generated files are saved to memory first<br />
+                  • Edit and enhance before saving to disk<br />
+                  • Files persist in your workspace<br />
+                </div>
+              </div>
+            ) : (
+              <div className={`${colors.textSecondary} space-y-1`}>
+                {Object.entries(memoryFiles).map(([fileId, file]) => (
+                  <div 
+                    key={fileId}
+                    className={`flex items-center py-1 px-2 rounded cursor-pointer transition-colors ${colors.hover} group`}
+                  >
+                    <div
+                      className="flex items-center flex-1"
+                      onClick={() => {
+                        // Open memory file in tab
+                        const tabId = `memory_${fileId}`;
+                        addTab({
+                          id: tabId,
+                          name: file.name,
+                          type: 'file',
+                          isActive: true,
+                          isDirty: false,
+                          isMemoryFile: true,
+                          fileId: fileId,
+                          content: file.content
+                        });
+                      }}
+                    >
+                      <span className={`w-4 h-4 mr-2 flex items-center justify-center text-xs ${file.isGenerated ? 'text-blue-400' : 'text-green-400'}`}>
+                        {file.type === 'sql' ? '🗃️' : '📄'}
+                      </span>
+                      <span className={`text-xs flex-1 ${colors.text}`}>
+                        {file.name}
+                      </span>
+                      <span className={`text-xs ${colors.textMuted} opacity-0 group-hover:opacity-100 transition-opacity mr-2`}>
+                        {file.isGenerated ? 'Generated' : 'Modified'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeMemoryFile(fileId);
+                      }}
+                      className={`w-4 h-4 rounded flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity ${colors.error} hover:bg-red-600`}
+                      title="Delete file"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
               </div>
             )
           ) : activeTab === 'github' ? (
@@ -2420,8 +2530,51 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
           </div>
         </div>
       )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`
+          fixed top-4 right-4 z-50 max-w-sm px-4 py-3 rounded-lg shadow-lg border
+          ${toast.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 
+            toast.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' : 
+            toast.type === 'warning' ? 'bg-yellow-50 border-yellow-200 text-yellow-800' :
+            'bg-blue-50 border-blue-200 text-blue-800'}
+          transform transition-all duration-300 ease-in-out
+          animate-fadeInSlide
+        `}>
+          <div className="flex items-center">
+            <div className="flex-shrink-0">
+              {toast.type === 'success' && (
+                <svg className="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              )}
+              {toast.type === 'error' && (
+                <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              )}
+              {toast.type === 'warning' && (
+                <svg className="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              )}
+              {(toast.type === 'info' || !toast.type) && (
+                <svg className="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+              )}
+            </div>
+            <div className="ml-3 text-sm font-medium">
+              {toast.message}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
+
+FileExplorer.displayName = 'FileExplorer';
 
 export default FileExplorer;

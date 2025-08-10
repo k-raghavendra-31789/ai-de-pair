@@ -11,8 +11,19 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   const { state, actions } = useAppState();
   
   // Get tab and Excel data from context
-  const { openTabs, excelFiles } = state;
-  const { updateTabs, setExcelData, updateExcelFile, setExcelActiveSheet } = actions;
+  const { openTabs, excelFiles, sqlGeneration, memoryFiles } = state;
+  const { 
+    updateTabs, 
+    setExcelData, 
+    updateExcelFile, 
+    setExcelActiveSheet, 
+    addTab, 
+    setActiveTab: setActiveTabInContext,
+    addMemoryFile,
+    updateMemoryFile,
+    saveMemoryFileToDisk,
+    removeMemoryFile
+  } = actions;
   
   // CSS to hide textarea scrollbars
   useEffect(() => {
@@ -47,6 +58,9 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   const dragCounterRef = useRef(0);
   const saveTimeoutRef = useRef({});
 
+  // Get the active tab (moved here to avoid initialization order issues)
+  const activeTab = openTabs.find(tab => tab.isActive);
+
   // Helper function to check if file is Excel
   const isExcelFile = (fileName) => {
     const extension = fileName.split('.').pop()?.toLowerCase();
@@ -56,35 +70,32 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   // Handle file rename by updating open tabs
   const handleFileRenamed = useCallback((oldName, newName, newHandle) => {
     
-    setOpenTabs(prevTabs => {
-      return prevTabs.map(tab => {
-        // Check if this tab corresponds to the renamed file
-        if (tab.name === oldName) {
-          return {
-            ...tab,
+    const updatedTabs = openTabs.map(tab => {
+      // Check if this tab corresponds to the renamed file
+      if (tab.name === oldName) {
+        return {
+          ...tab,
+          name: newName,
+          handle: newHandle
+        };
+      }
+      return tab;
+    });
+    updateTabs(updatedTabs);
+
+    // Update Excel files data if it's an Excel file
+    if (isExcelFile(oldName)) {
+      const newFiles = { ...excelFiles };
+      Object.keys(newFiles).forEach(tabId => {
+        if (newFiles[tabId] && newFiles[tabId].name === oldName) {
+          newFiles[tabId] = {
+            ...newFiles[tabId],
             name: newName,
             handle: newHandle
           };
         }
-        return tab;
       });
-    });
-
-    // Update Excel files data if it's an Excel file
-    if (isExcelFile(oldName)) {
-      setExcelFiles(prevFiles => {
-        const newFiles = { ...prevFiles };
-        Object.keys(newFiles).forEach(tabId => {
-          if (newFiles[tabId] && newFiles[tabId].name === oldName) {
-            newFiles[tabId] = {
-              ...newFiles[tabId],
-              name: newName,
-              handle: newHandle
-            };
-          }
-        });
-        return newFiles;
-      });
+      setExcelData(newFiles);
     }
 
     // Update file contents mapping
@@ -113,7 +124,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         }
       }
     }
-  }, [openTabs, isExcelFile]);
+  }, [openTabs, excelFiles, updateTabs, setExcelData, isExcelFile]);
 
   // Check if current tab is a GitHub file
   const isGitHubFile = (tabId) => {
@@ -185,7 +196,6 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       URL.revokeObjectURL(url);
       
       // Show success message
-  // console.log(`Successfully downloaded: ${cleanFileName}`);
       
     } catch (error) {
       console.error('Error downloading file:', error);
@@ -211,6 +221,47 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     getExcelFiles: () => excelFiles
   }));
 
+  // Function to save memory file to disk
+  const saveMemoryToDisk = useCallback(async (fileName) => {
+    const currentTab = openTabs.find(tab => tab.name === fileName);
+    if (!currentTab?.isMemoryFile) return;
+
+    const memoryFile = memoryFiles[currentTab.fileId];
+    if (!memoryFile) return;
+
+    try {
+      const fileHandle = await window.showSaveFilePicker({
+        suggestedName: fileName,
+        types: [{
+          description: `${memoryFile.type.toUpperCase()} files`,
+          accept: { [`text/${memoryFile.type}`]: [`.${memoryFile.type}`] }
+        }]
+      });
+
+      const writable = await fileHandle.createWritable();
+      await writable.write(memoryFile.content);
+      await writable.close();
+
+      // Mark as saved to disk
+      saveMemoryFileToDisk(currentTab.fileId);
+      
+      // Update tab to show it's no longer just in memory
+      const updatedTabs = openTabs.map(tab => 
+        tab.name === fileName ? { 
+          ...tab, 
+          isMemoryFile: false,
+          isSavedToDisk: true 
+        } : tab
+      );
+      updateTabs(updatedTabs);
+
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        console.error('Error saving memory file to disk:', error);
+      }
+    }
+  }, [openTabs, memoryFiles, saveMemoryFileToDisk, updateTabs]);
+
   const saveFileContent = useCallback(async (fileName, content) => {
     try {
       // Don't save deleted files
@@ -218,8 +269,23 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         return;
       }
 
-      // Find the active tab to get the fileId
+      // Check tab type
       const currentTab = openTabs.find(tab => tab.name === fileName);
+      const isMemoryFile = currentTab?.isMemoryFile;
+
+      if (isMemoryFile) {
+        // For memory files, update the memory content
+        updateMemoryFile(currentTab.fileId, content);
+        
+        // Mark tab as clean
+        const updatedTabs = openTabs.map(tab => 
+          tab.name === fileName ? { ...tab, isDirty: false } : tab
+        );
+        updateTabs(updatedTabs);
+        return;
+      }
+
+      // Find the active tab to get the fileId for regular files
       if (!currentTab || !currentTab.fileId) {
         return;
       }
@@ -291,21 +357,23 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         }
       }
     }
-  }, [openTabs, deletedFiles]);
+  }, [openTabs, deletedFiles, updateMemoryFile, updateTabs]);
 
-  // Initialize content for existing tabs
+  // Handle keyboard shortcuts for saving
   useEffect(() => {
-    const initializeContent = {};
-    openTabs.forEach(tab => {
-      if (!fileContents[tab.name]) {
-        initializeContent[tab.name] = getInitialFileContent(tab.name);
+    const handleKeyDown = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+        event.preventDefault();
+        if (activeTab) {
+          const content = fileContents[activeTab.name] || '';
+          saveFileContent(activeTab.name, content);
+        }
       }
-    });
-    
-    if (Object.keys(initializeContent).length > 0) {
-      setFileContents(prev => ({ ...prev, ...initializeContent }));
-    }
-  }, []);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTab, fileContents, saveFileContent]);
 
   // Add keyboard shortcuts
   useEffect(() => {
@@ -324,6 +392,138 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [openTabs, fileContents, saveFileContent]);
+
+  // SQL Generation Hooks
+  
+  // Hook to create SQL tab when generation starts
+  useEffect(() => {
+    if (sqlGeneration.isActive && sqlGeneration.generationId) {
+      const sqlTabId = `sql_${sqlGeneration.generationId}`;
+      const existingSqlTab = openTabs.find(tab => tab.id === sqlTabId);
+      
+      if (!existingSqlTab) {
+        const sqlFileName = `generated-sql-${sqlGeneration.generationId}.sql`;
+        const sqlTab = {
+          id: sqlTabId,
+          name: sqlFileName,
+          type: 'file',
+          path: sqlFileName,
+          isGenerated: true,
+          isActive: true,
+          language: 'sql'
+        };
+        
+        // Initialize with empty content first
+        setFileContents(prev => ({
+          ...prev,
+          [sqlTabId]: '-- SQL Generation Starting...\n-- Please wait while we build your semantic layer\n'
+        }));
+        
+        addTab(sqlTab);
+        setActiveTabInContext(sqlTabId);
+      }
+    }
+  }, [sqlGeneration.isActive, sqlGeneration.generationId, openTabs, addTab, setActiveTabInContext]);
+
+  // Hook to update SQL content in real-time and auto-save when complete
+  useEffect(() => {
+    if (sqlGeneration.isActive && sqlGeneration.generationId && sqlGeneration.sqlContent) {
+      const sqlTabId = `sql_${sqlGeneration.generationId}`;
+      
+      // Update file contents for the SQL tab only if content is different
+      setFileContents(prev => {
+        const currentContent = prev[sqlTabId];
+        if (currentContent !== sqlGeneration.sqlContent) {
+          return {
+            ...prev,
+            [sqlTabId]: sqlGeneration.sqlContent
+          };
+        }
+        return prev; // Return same object to prevent unnecessary re-render
+      });
+
+      // Auto-save to memory when generation is complete
+      if (sqlGeneration.currentStage === 'complete') {
+        const fileName = `generated-sql-${sqlGeneration.generationId}.sql`;
+        const memoryFileId = `sql_gen_${sqlGeneration.generationId}`;
+        
+        // Check if already in memory - update, don't duplicate
+        const existingMemoryFile = memoryFiles[memoryFileId];
+        if (existingMemoryFile) {
+          updateMemoryFile(memoryFileId, sqlGeneration.sqlContent);
+        } else {
+          // Add new memory file with consistent ID
+          addMemoryFile(memoryFileId, fileName, sqlGeneration.sqlContent, 'sql', false);
+        }
+
+        // Update tab to reference memory file
+        const currentTab = openTabs.find(tab => tab.id === sqlTabId);
+        if (currentTab && !currentTab.isMemoryFile) {
+          const updatedTabs = openTabs.map(tab => 
+            tab.id === sqlTabId ? { 
+              ...tab, 
+              isGenerated: false,
+              isMemoryFile: true,
+              fileId: memoryFileId,
+              isDirty: false 
+            } : tab
+          );
+          updateTabs(updatedTabs);
+        }
+      }
+    }
+  }, [sqlGeneration.sqlContent, sqlGeneration.generationId, sqlGeneration.isActive, sqlGeneration.currentStage, memoryFiles, openTabs, addMemoryFile, updateMemoryFile, updateTabs]);
+
+  // Hook to update tab title based on generation stage
+  useEffect(() => {
+    if (sqlGeneration.isActive && sqlGeneration.generationId) {
+      const sqlTabId = `sql_${sqlGeneration.generationId}`;
+      const stageIndicators = {
+        'parsing-file': '📊',
+        'analyzing': '🔍', 
+        'generating-joins': '🔗',
+        'generating-select': '📋',
+        'generating-filters': '🔍',
+        'combining': '🔧',
+        'complete': '✅'
+      };
+      
+      const stageIndicator = stageIndicators[sqlGeneration.currentStage] || '🔄';
+      const baseFileName = `generated-sql-${sqlGeneration.generationId}.sql`;
+      const newTabName = sqlGeneration.currentStage === 'complete' 
+        ? `${baseFileName}` 
+        : `${stageIndicator} ${baseFileName}`;
+      
+      // Update tab name if it's different
+      const currentTab = openTabs.find(tab => tab.id === sqlTabId);
+      if (currentTab && currentTab.name !== newTabName) {
+        const updatedTabs = openTabs.map(tab => 
+          tab.id === sqlTabId ? { ...tab, name: newTabName } : tab
+        );
+        updateTabs(updatedTabs);
+      }
+    }
+  }, [sqlGeneration.currentStage, sqlGeneration.generationId, sqlGeneration.isActive, openTabs, updateTabs]);
+
+  // Load memory file content when memory file tab becomes active
+  useEffect(() => {
+    if (activeTab?.isMemoryFile && activeTab?.fileId) {
+      const memoryFile = memoryFiles[activeTab.fileId];
+      if (memoryFile && memoryFile.content) {
+        // Only update if content is different to prevent infinite loops
+        setFileContents(prev => {
+          const currentContent = prev[activeTab.id];
+          if (currentContent !== memoryFile.content) {
+            return {
+              ...prev,
+              [activeTab.id]: memoryFile.content
+            };
+          }
+          return prev; // Return same object to prevent unnecessary re-render
+        });
+      }
+    }
+  }, [activeTab?.id, activeTab?.isMemoryFile, activeTab?.fileId, memoryFiles]);
 
   const openFileInTab = (fileName) => {
     // For simple filename-only cases, use filename as both identifier and name
@@ -353,10 +553,11 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       isDirty: false
     };
 
-    setOpenTabs(prev => [
-      ...prev.map(tab => ({ ...tab, isActive: false })),
+    const updatedTabsForFile = [
+      ...openTabs.map(tab => ({ ...tab, isActive: false })),
       newTab
-    ]);
+    ];
+    updateTabs(updatedTabsForFile);
     
     // Notify parent component about file opening
     if (onFileOpen) {
@@ -599,12 +800,9 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     }
   };
 
-  const activeTab = openTabs.find(tab => tab.isActive);
-
   // Memoize Excel content to prevent unnecessary re-renders
   const memoizedExcelContent = useMemo(() => {
     const excelFile = activeTab && isExcelFile(activeTab.name) ? excelFiles[activeTab.id] : null;
-  // console.log('MainEditor: Memoized Excel content changed for tab:', activeTab?.id, 'has content:', !!excelFile?.content);
     return excelFile?.content || null;
   }, [activeTab?.id, excelFiles[activeTab?.id]?.content, activeTab?.name]); // More specific dependency
 
@@ -670,6 +868,24 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
               <span className={`text-sm truncate flex-1 ${isDeleted ? `${colors.error} line-through` : ''}`}>
                 {tab.name}{tab.isDirty ? '*' : ''}
               </span>
+              
+              {/* Save to Disk Button for Memory Files */}
+              {tab.isMemoryFile && (
+                <button
+                  className={`
+                    ml-1 mr-1 w-4 h-4 rounded flex items-center justify-center flex-shrink-0
+                    ${colors.accent} ${colors.text} hover:${colors.primary} text-xs
+                    transition-colors
+                  `}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    saveMemoryToDisk(tab.name);
+                  }}
+                  title="Save to disk"
+                >
+                  💾
+                </button>
+              )}
               
               {/* Close Button */}
               {tab.name !== 'Welcome' && (
@@ -874,5 +1090,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     </div>
   );
 });
+
+MainEditor.displayName = 'MainEditor';
 
 export default MainEditor;
