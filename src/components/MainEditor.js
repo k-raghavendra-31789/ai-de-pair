@@ -447,32 +447,46 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         const fileName = `generated-sql-${sqlGeneration.generationId}.sql`;
         const memoryFileId = `sql_gen_${sqlGeneration.generationId}`;
         
-        // Check if already in memory - update, don't duplicate
+        // Check if already in memory - only act if not already processed
         const existingMemoryFile = memoryFiles[memoryFileId];
-        if (existingMemoryFile) {
-          updateMemoryFile(memoryFileId, sqlGeneration.sqlContent);
-        } else {
-          // Add new memory file with consistent ID
-          addMemoryFile(memoryFileId, fileName, sqlGeneration.sqlContent, 'sql', false);
-        }
-
-        // Update tab to reference memory file
         const currentTab = openTabs.find(tab => tab.id === sqlTabId);
-        if (currentTab && !currentTab.isMemoryFile) {
-          const updatedTabs = openTabs.map(tab => 
-            tab.id === sqlTabId ? { 
-              ...tab, 
-              isGenerated: false,
-              isMemoryFile: true,
-              fileId: memoryFileId,
-              isDirty: false 
-            } : tab
-          );
-          updateTabs(updatedTabs);
+        
+        // Only proceed if memory file doesn't exist OR tab is not yet marked as memory file
+        if (!existingMemoryFile || (currentTab && !currentTab.isMemoryFile)) {
+          if (existingMemoryFile) {
+            updateMemoryFile(memoryFileId, sqlGeneration.sqlContent);
+          } else {
+            // Add new memory file with consistent ID
+            addMemoryFile(memoryFileId, fileName, sqlGeneration.sqlContent, 'sql', false);
+          }
+
+          // Update tab to reference memory file only if not already a memory file
+          if (currentTab && !currentTab.isMemoryFile) {
+            const updatedTabs = openTabs.map(tab => 
+              tab.id === sqlTabId ? { 
+                ...tab, 
+                isGenerated: false,
+                isMemoryFile: true,
+                fileId: memoryFileId,
+                isDirty: false 
+              } : tab
+            );
+            updateTabs(updatedTabs);
+          }
         }
       }
     }
-  }, [sqlGeneration.sqlContent, sqlGeneration.generationId, sqlGeneration.isActive, sqlGeneration.currentStage, memoryFiles, openTabs, addMemoryFile, updateMemoryFile, updateTabs]);
+  }, [
+    sqlGeneration.sqlContent, 
+    sqlGeneration.generationId, 
+    sqlGeneration.isActive, 
+    sqlGeneration.currentStage,
+    memoryFiles, 
+    openTabs, 
+    addMemoryFile, 
+    updateMemoryFile, 
+    updateTabs
+  ]);
 
   // Hook to update tab title based on generation stage
   useEffect(() => {
@@ -804,7 +818,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   const memoizedExcelContent = useMemo(() => {
     const excelFile = activeTab && isExcelFile(activeTab.name) ? excelFiles[activeTab.id] : null;
     return excelFile?.content || null;
-  }, [activeTab?.id, excelFiles[activeTab?.id]?.content, activeTab?.name]); // More specific dependency
+  }, [activeTab, excelFiles]);
 
   // Memoize Excel metadata (activeSheet, sheetNames)
   const memoizedExcelMeta = useMemo(() => {
@@ -813,7 +827,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       activeSheet: excelFile?.activeSheet,
       sheetNames: excelFile?.sheetNames
     };
-  }, [activeTab?.id, excelFiles[activeTab?.id]?.activeSheet, excelFiles[activeTab?.id]?.sheetNames]);
+  }, [activeTab, excelFiles]);
 
   // Handle Excel sheet changes
   const handleExcelSheetChange = useCallback((tabId, activeSheet, sheetNames) => {
@@ -833,7 +847,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       handle: memoizedFileHandle,
       tabId: activeTab.id
     };
-  }, [activeTab?.id, activeTab?.name, memoizedFileHandle]);
+  }, [activeTab, memoizedFileHandle]);
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
