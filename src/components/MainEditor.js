@@ -6,13 +6,14 @@ import MonacoEditor from './MonacoEditor';
 import ExcelViewer from './ExcelViewer';
 import VersionHistory from './VersionHistory';
 import { FaDownload } from 'react-icons/fa';
+import { connectionManager } from '../services/ConnectionManager';
 
 const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, ref) => {
   const { theme, toggleTheme, colors } = useTheme();
   const { state, actions } = useAppState();
   
   // Get tab and Excel data from context
-  const { openTabs, excelFiles, sqlGeneration, memoryFiles } = state;
+  const { openTabs, excelFiles, sqlGeneration, memoryFiles, activeConnectionId, sqlExecution } = state;
   const { 
     updateTabs, 
     setExcelData, 
@@ -22,12 +23,16 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     setActiveTab: setActiveTabInContext,
     addMemoryFile,
     updateMemoryFile,
+    executeSqlQuery: executeFromAppState,
     saveMemoryFileToDisk,
     removeMemoryFile,
     restoreFileVersion,
-    clearFileHistory
+    clearFileHistory,
+    setSqlExecuting,
+    setSqlResults
   } = actions;
   
+  // CSS to hide textarea scrollbars
   // CSS to hide textarea scrollbars
   useEffect(() => {
     const style = document.createElement('style');
@@ -393,6 +398,27 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     }
   }, [openTabs, deletedFiles, updateMemoryFile, updateTabs]);
 
+  // SQL Execution Function - Use centralized AppState action
+  const executeSqlQuery = useCallback(async (query, selectedText = null) => {
+    if (!activeConnectionId) {
+      console.warn('No active connection selected');
+      return;
+    }
+
+    const sqlToExecute = selectedText || query;
+    if (!sqlToExecute?.trim()) {
+      console.warn('No SQL content to execute');
+      return;
+    }
+
+    // Get the current file name as source identifier
+    const sourceFile = activeTab?.name || null;
+    console.log('MainEditor: Executing SQL for source file:', sourceFile);
+
+    // Use centralized SQL execution from AppState with source file info
+    await executeFromAppState(sqlToExecute, activeConnectionId, sourceFile);
+  }, [activeConnectionId, executeFromAppState, activeTab?.name]);
+
   // Handle keyboard shortcuts for saving
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -577,6 +603,33 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       }
     }
   }, [activeTab?.id, activeTab?.isMemoryFile, activeTab?.fileId, memoryFiles, getCurrentMemoryFileContent]);
+
+  // Handle keyboard shortcuts for SQL execution
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      // Check if we're in a SQL file and user pressed Ctrl+Enter (or Cmd+Enter on Mac)
+      if (
+        activeTab?.name.toLowerCase().endsWith('.sql') &&
+        (event.ctrlKey || event.metaKey) &&
+        event.key === 'Enter'
+      ) {
+        event.preventDefault();
+        executeSqlQuery(
+          activeTab?.type === 'memory' 
+            ? getCurrentMemoryFileContent(activeTab?.id) 
+            : (fileContents[activeTab?.id] || '')
+        );
+      }
+    };
+
+    // Add event listener to the document
+    document.addEventListener('keydown', handleKeyDown);
+
+    // Cleanup event listener on unmount
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeTab?.name, activeTab?.id, activeTab?.type, fileContents, getCurrentMemoryFileContent, executeSqlQuery]);
 
   const openFileInTab = (fileName) => {
     // For simple filename-only cases, use filename as both identifier and name
@@ -1043,6 +1096,42 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
                   <span className="text-xs bg-blue-600 text-white rounded-full px-1 ml-1">
                     {memoryFiles[activeTab.id].versions.length}
                   </span>
+                )}
+              </button>
+            )}
+
+            {/* Run SQL Button - Show for SQL files */}
+            {activeTab?.name.toLowerCase().endsWith('.sql') && (
+              <button
+                onClick={() => executeSqlQuery(
+                  activeTab?.type === 'memory' 
+                    ? getCurrentMemoryFileContent(activeTab?.id) 
+                    : (fileContents[activeTab?.id] || '')
+                )}
+                disabled={sqlExecution.isExecuting || !activeConnectionId}
+                className={`px-3 py-1 text-xs rounded flex items-center gap-1 transition-colors ${
+                  sqlExecution.isExecuting || !activeConnectionId
+                    ? `${colors.textMuted} cursor-not-allowed opacity-50 ${colors.border}` 
+                    : `${colors.primary} text-white hover:bg-green-600`
+                }`}
+                title={
+                  !activeConnectionId 
+                    ? "No database connection selected. Please configure a connection first." 
+                    : sqlExecution.isExecuting 
+                      ? "Executing query..." 
+                      : "Run SQL Query (Ctrl+Enter)"
+                }
+              >
+                {sqlExecution.isExecuting ? (
+                  <>
+                    <span className="animate-spin">⟳</span>
+                    Running...
+                  </>
+                ) : (
+                  <>
+                    ▶️
+                    Run SQL
+                  </>
                 )}
               </button>
             )}

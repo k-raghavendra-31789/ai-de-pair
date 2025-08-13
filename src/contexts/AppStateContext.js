@@ -51,6 +51,18 @@ const ACTION_TYPES = {
   SUBMIT_USER_RESPONSE: 'SUBMIT_USER_RESPONSE',
   RESUME_SQL_GENERATION: 'RESUME_SQL_GENERATION',
   
+  // Database Connection Management
+  ADD_DB_CONNECTION: 'ADD_DB_CONNECTION',
+  UPDATE_DB_CONNECTION: 'UPDATE_DB_CONNECTION',
+  DELETE_DB_CONNECTION: 'DELETE_DB_CONNECTION',
+  SET_ACTIVE_CONNECTION: 'SET_ACTIVE_CONNECTION',
+  SET_CONNECTION_STATUS: 'SET_CONNECTION_STATUS',
+  
+  // SQL Execution
+  EXECUTE_SQL_QUERY: 'EXECUTE_SQL_QUERY',
+  SET_SQL_RESULTS: 'SET_SQL_RESULTS',
+  SET_SQL_EXECUTING: 'SET_SQL_EXECUTING',
+  
   // UI State
   SET_PANEL_SIZES: 'SET_PANEL_SIZES',
   TOGGLE_TERMINAL: 'TOGGLE_TERMINAL',
@@ -62,6 +74,7 @@ const STORAGE_KEYS = {
   FOLDERS: 'fileExplorer_openFolders',
   EXPANDED_FOLDERS: 'fileExplorer_expandedFolders',
   FILE_HANDLES: 'fileExplorer_fileHandles',
+  DB_CONNECTIONS: 'databricks_connections', // sessionStorage key for connection metadata
 };
 
 // Helper function to get current content from version history
@@ -143,6 +156,22 @@ const loadExpandedFoldersFromStorage = () => {
   }
 };
 
+const loadDatabaseConnectionsFromStorage = () => {
+  try {
+    const stored = sessionStorage.getItem(STORAGE_KEYS.DB_CONNECTIONS);
+    if (!stored) return [];
+    
+    const parsed = JSON.parse(stored);
+    // Ensure we always return an array
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn('Failed to load database connections from sessionStorage:', error);
+    // Clear corrupted data
+    sessionStorage.removeItem(STORAGE_KEYS.DB_CONNECTIONS);
+    return [];
+  }
+};
+
 // Initial State with persistence
 const createInitialState = () => ({
   // File State
@@ -189,6 +218,20 @@ const createInitialState = () => ({
       selectFields: [],
       whereConditions: []
     }
+  },
+  
+  // Database Connection State
+  dbConnections: loadDatabaseConnectionsFromStorage(), // Load from sessionStorage
+  activeConnectionId: null, // ID of currently active connection
+  connectionStatus: {}, // { connectionId: { isConnected: boolean, lastChecked: Date, error: string } }
+  
+  // SQL Execution State
+  sqlExecution: {
+    isExecuting: false,
+    lastQuery: '',
+    lastResults: null,
+    lastError: null,
+    resultTabs: [], // Track result tabs created from MainEditor
   },
   
   // UI State
@@ -859,6 +902,138 @@ const appStateReducer = (state, action) => {
       };
     }
 
+    // Database Connection Management
+    case ACTION_TYPES.ADD_DB_CONNECTION: {
+      const { connectionId, connectionData } = action.payload;
+      const connectionMetadata = {
+        id: connectionId,
+        name: connectionData.name,
+        serverHostname: connectionData.serverHostname,
+        httpPath: connectionData.httpPath,
+        createdAt: new Date().toISOString(),
+        lastUsed: null
+      };
+      
+      // Save to sessionStorage (without access_token)
+      const existingConnections = JSON.parse(sessionStorage.getItem(STORAGE_KEYS.DB_CONNECTIONS) || '[]');
+      const updatedConnections = [...existingConnections, connectionMetadata];
+      sessionStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(updatedConnections));
+      
+      return {
+        ...state,
+        dbConnections: [...state.dbConnections, connectionMetadata]
+      };
+    }
+
+    case ACTION_TYPES.UPDATE_DB_CONNECTION: {
+      const { connectionId, updates } = action.payload;
+      
+      const updatedConnections = state.dbConnections.map(conn =>
+        conn.id === connectionId ? { ...conn, ...updates } : conn
+      );
+      
+      // Update sessionStorage
+      sessionStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(updatedConnections));
+      
+      return {
+        ...state,
+        dbConnections: updatedConnections
+      };
+    }
+
+    case ACTION_TYPES.DELETE_DB_CONNECTION: {
+      const { connectionId } = action.payload;
+      
+      const filteredConnections = state.dbConnections.filter(conn => conn.id !== connectionId);
+      
+      // Update sessionStorage
+      sessionStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(filteredConnections));
+      
+      // Clear active connection if it was deleted
+      const newActiveId = state.activeConnectionId === connectionId ? null : state.activeConnectionId;
+      
+      // Remove from connection status
+      const { [connectionId]: removed, ...remainingStatus } = state.connectionStatus;
+      
+      return {
+        ...state,
+        dbConnections: filteredConnections,
+        activeConnectionId: newActiveId,
+        connectionStatus: remainingStatus
+      };
+    }
+
+    case ACTION_TYPES.SET_ACTIVE_CONNECTION: {
+      const { connectionId } = action.payload;
+      
+      // Update lastUsed timestamp
+      const updatedConnections = state.dbConnections.map(conn =>
+        conn.id === connectionId 
+          ? { ...conn, lastUsed: new Date().toISOString() }
+          : conn
+      );
+      
+      // Update sessionStorage
+      sessionStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(updatedConnections));
+      
+      return {
+        ...state,
+        activeConnectionId: connectionId,
+        dbConnections: updatedConnections
+      };
+    }
+
+    case ACTION_TYPES.SET_CONNECTION_STATUS: {
+      const { connectionId, status } = action.payload;
+      
+      return {
+        ...state,
+        connectionStatus: {
+          ...state.connectionStatus,
+          [connectionId]: {
+            ...state.connectionStatus[connectionId],
+            ...status,
+            lastChecked: new Date().toISOString()
+          }
+        }
+      };
+    }
+
+    // SQL Execution Cases
+    case ACTION_TYPES.SET_SQL_EXECUTING: {
+      const { isExecuting } = action.payload;
+      console.log('AppStateContext: SET_SQL_EXECUTING action received:', { isExecuting });
+      const newState = {
+        ...state,
+        sqlExecution: {
+          ...state.sqlExecution,
+          isExecuting
+        }
+      };
+      console.log('AppStateContext: New SQL execution state (executing):', newState.sqlExecution);
+      return newState;
+    }
+
+    case ACTION_TYPES.SET_SQL_RESULTS: {
+      const { query, results, error, resultTabId, sourceFile, isLoading } = action.payload;
+      console.log('AppStateContext: SET_SQL_RESULTS action received:', { query, results, error, resultTabId, sourceFile, isLoading });
+      const newState = {
+        ...state,
+        sqlExecution: {
+          ...state.sqlExecution,
+          lastQuery: query,
+          lastResults: results,
+          lastError: error,
+          lastSourceFile: sourceFile,
+          lastResultTabId: resultTabId,
+          isLoading: isLoading || false,
+          resultTabs: resultTabId ? [...state.sqlExecution.resultTabs, resultTabId] : state.sqlExecution.resultTabs
+        }
+      };
+      console.log('AppStateContext: New SQL execution state:', newState.sqlExecution);
+      return newState;
+    }
+
     default:
       return state;
   }
@@ -983,6 +1158,109 @@ export const AppStateProvider = ({ children }) => {
     setPanelSizes: (sizes) => dispatch({ type: ACTION_TYPES.SET_PANEL_SIZES, payload: sizes }),
     toggleTerminal: () => dispatch({ type: ACTION_TYPES.TOGGLE_TERMINAL }),
     setResizing: (isResizing) => dispatch({ type: ACTION_TYPES.SET_RESIZING, payload: isResizing }),
+    
+    // Database Connection Actions
+    addDbConnection: (connectionId, connectionData) => dispatch({ 
+      type: ACTION_TYPES.ADD_DB_CONNECTION, 
+      payload: { connectionId, connectionData } 
+    }),
+    updateDbConnection: (connectionId, updates) => dispatch({ 
+      type: ACTION_TYPES.UPDATE_DB_CONNECTION, 
+      payload: { connectionId, updates } 
+    }),
+    deleteDbConnection: (connectionId) => dispatch({ 
+      type: ACTION_TYPES.DELETE_DB_CONNECTION, 
+      payload: { connectionId } 
+    }),
+    setActiveConnection: (connectionId) => dispatch({ 
+      type: ACTION_TYPES.SET_ACTIVE_CONNECTION, 
+      payload: { connectionId } 
+    }),
+    setConnectionStatus: (connectionId, status) => dispatch({ 
+      type: ACTION_TYPES.SET_CONNECTION_STATUS, 
+      payload: { connectionId, status } 
+    }),
+    
+    // SQL Execution Actions
+    executeSqlQuery: async (query, connectionId = null, sourceFile = null) => {
+      const activeConn = connectionId || state.activeConnectionId;
+      if (!activeConn) {
+        console.warn('No active connection for SQL execution');
+        return;
+      }
+
+      if (!query?.trim()) {
+        console.warn('Empty SQL query');
+        return;
+      }
+
+      // Create result tab identifier based on source file if provided
+      const resultTabId = sourceFile ? `result-${sourceFile}` : `result-${Date.now()}`;
+      
+      // Set executing state and create/update loading tab
+      dispatch({
+        type: ACTION_TYPES.SET_SQL_EXECUTING,
+        payload: { isExecuting: true }
+      });
+      
+      dispatch({
+        type: ACTION_TYPES.SET_SQL_RESULTS,
+        payload: { 
+          query: query.trim(), 
+          results: null, 
+          error: null, 
+          resultTabId,
+          sourceFile,
+          isLoading: true 
+        }
+      });
+
+      try {
+        // Import connectionManager dynamically to avoid circular dependency
+        const { connectionManager } = await import('../services/ConnectionManager');
+        const result = await connectionManager.executeSQL(activeConn, query.trim(), { actions });
+        
+        // Update with actual results
+        dispatch({
+          type: ACTION_TYPES.SET_SQL_RESULTS,
+          payload: { 
+            query: query.trim(), 
+            results: result, 
+            error: null, 
+            resultTabId,
+            sourceFile,
+            isLoading: false 
+          }
+        });
+        
+      } catch (error) {
+        console.error('SQL execution error:', error);
+        dispatch({
+          type: ACTION_TYPES.SET_SQL_RESULTS,
+          payload: { 
+            query: query.trim(), 
+            results: null, 
+            error: error.message, 
+            resultTabId,
+            sourceFile,
+            isLoading: false 
+          }
+        });
+      } finally {
+        dispatch({
+          type: ACTION_TYPES.SET_SQL_EXECUTING,
+          payload: { isExecuting: false }
+        });
+      }
+    },
+    setSqlExecuting: (isExecuting) => dispatch({
+      type: ACTION_TYPES.SET_SQL_EXECUTING,
+      payload: { isExecuting }
+    }),
+    setSqlResults: (query, results, error, resultTabId) => dispatch({
+      type: ACTION_TYPES.SET_SQL_RESULTS,
+      payload: { query, results, error, resultTabId }
+    }),
   };
   
   return (
