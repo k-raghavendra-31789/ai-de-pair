@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const ThemeContext = createContext();
 
@@ -12,9 +12,22 @@ export const useTheme = () => {
 
 export const ThemeProvider = ({ children }) => {
   const [theme, setTheme] = useState('dark');
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   const toggleTheme = () => {
+    setIsTransitioning(true);
+    
+    // Add CSS class to disable transitions
+    document.body.classList.add('theme-transitioning');
+    
+    // Change theme immediately
     setTheme(prevTheme => prevTheme === 'dark' ? 'light' : 'dark');
+    
+    // Re-enable transitions after a short delay
+    setTimeout(() => {
+      document.body.classList.remove('theme-transitioning');
+      setIsTransitioning(false);
+    }, 100);
   };
 
   const themes = {
@@ -68,7 +81,8 @@ export const ThemeProvider = ({ children }) => {
     <ThemeContext.Provider value={{ 
       theme, 
       toggleTheme, 
-      colors: themes[theme] 
+      colors: themes[theme],
+      isTransitioning
     }}>
       {children}
     </ThemeContext.Provider>
