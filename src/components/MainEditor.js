@@ -263,7 +263,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   // Function to save memory file to disk
   const saveMemoryToDisk = useCallback(async (fileName) => {
     const currentTab = openTabs.find(tab => tab.name === fileName);
-    if (!currentTab?.isMemoryFile) return;
+    if (!currentTab || currentTab.type !== 'memory') return;
 
     const memoryFile = memoryFiles[currentTab.fileId];
     if (!memoryFile) return;
@@ -288,7 +288,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       const updatedTabs = openTabs.map(tab => 
         tab.name === fileName ? { 
           ...tab, 
-          isMemoryFile: false,
+          type: 'file',
           isSavedToDisk: true 
         } : tab
       );
@@ -310,7 +310,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
       // Check tab type
       const currentTab = openTabs.find(tab => tab.name === fileName);
-      const isMemoryFile = currentTab?.isMemoryFile;
+      const isMemoryFile = currentTab?.type === 'memory';
 
       if (isMemoryFile) {
         // For memory files, update the memory content
@@ -515,7 +515,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         const currentTab = openTabs.find(tab => tab.id === sqlTabId);
         
         // Only proceed if memory file doesn't exist OR tab is not yet marked as memory file
-        if (!existingMemoryFile || (currentTab && !currentTab.isMemoryFile)) {
+        if (!existingMemoryFile || (currentTab && currentTab.type !== 'memory')) {
           if (existingMemoryFile) {
             updateMemoryFile(memoryFileId, sqlGeneration.sqlContent);
           } else {
@@ -524,12 +524,12 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
           }
 
           // Update tab to reference memory file only if not already a memory file
-          if (currentTab && !currentTab.isMemoryFile) {
+          if (currentTab && currentTab.type !== 'memory') {
             const updatedTabs = openTabs.map(tab => 
               tab.id === sqlTabId ? { 
                 ...tab, 
                 isGenerated: false,
-                isMemoryFile: true,
+                type: 'memory',
                 fileId: memoryFileId,
                 isDirty: false 
               } : tab
@@ -585,7 +585,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
   // Load memory file content when memory file tab becomes active
   useEffect(() => {
-    if (activeTab?.isMemoryFile && activeTab?.fileId) {
+    if (activeTab?.type === 'memory' && activeTab?.fileId) {
       const memoryFile = memoryFiles[activeTab.fileId];
       if (memoryFile && memoryFile.versions && memoryFile.versions.length > 0) {
         const currentMemoryContent = getCurrentMemoryFileContent(activeTab.fileId);
@@ -602,7 +602,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         });
       }
     }
-  }, [activeTab?.id, activeTab?.isMemoryFile, activeTab?.fileId, memoryFiles, getCurrentMemoryFileContent]);
+  }, [activeTab?.id, activeTab?.type, activeTab?.fileId, memoryFiles, getCurrentMemoryFileContent]);
 
   // Handle keyboard shortcuts for SQL execution
   useEffect(() => {
@@ -785,19 +785,24 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     }));
     updateTabs(updatedTabs);
 
-    // Debounced auto-save after 1 second of no typing
-    if (saveTimeoutRef.current[tabId]) {
-      clearTimeout(saveTimeoutRef.current[tabId]);
-    }
-    
-    // Get the filename for saving immediately (avoiding closure issues)
+    // Get the current tab to check if it's a memory file
     const currentTab = openTabs.find(t => t.id === tabId);
-    const fileName = currentTab?.name;
+    const isMemoryFile = currentTab?.type === 'memory';
     
-    if (fileName) {
-      saveTimeoutRef.current[tabId] = setTimeout(() => {
-        saveFileContent(fileName, newContent);
-      }, 1000);
+    // Only auto-save for regular files, not memory files
+    // Memory files will be saved manually via Ctrl+S
+    if (!isMemoryFile) {
+      // Debounced auto-save after 1 second of no typing
+      if (saveTimeoutRef.current[tabId]) {
+        clearTimeout(saveTimeoutRef.current[tabId]);
+      }
+      
+      const fileName = currentTab?.name;
+      if (fileName) {
+        saveTimeoutRef.current[tabId] = setTimeout(() => {
+          saveFileContent(fileName, newContent);
+        }, 1000);
+      }
     }
   };
 
@@ -976,7 +981,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
               </span>
               
               {/* Save to Disk Button for Memory Files */}
-              {tab.isMemoryFile && (
+              {tab.type === 'memory' && (
                 <button
                   className={`
                     ml-1 mr-1 w-4 h-4 rounded flex items-center justify-center flex-shrink-0
@@ -1205,7 +1210,12 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
                 <span className={colors.text}>{activeTab?.name}</span>
               </span>
               {activeTab?.isDirty && (
-                <span className={`${colors.warning} text-xs`}>● Unsaved changes</span>
+                <span className={`${colors.warning} text-xs flex items-center gap-1`}>
+                  ● Unsaved changes
+                  {activeTab?.type === 'memory' && (
+                    <span className={`${colors.textMuted} text-xs`}>(Press Ctrl+S to save)</span>
+                  )}
+                </span>
               )}
             </div>
             
@@ -1235,10 +1245,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
               ) : activeTab ? (
                 <MonacoEditor
                   key={activeTab?.id} // Force re-render when tab changes
-                  value={activeTab?.type === 'memory' 
-                    ? getCurrentMemoryFileContent(activeTab?.id) 
-                    : (fileContents[activeTab?.id] || '')
-                  }
+                  value={fileContents[activeTab?.id] || ''}
                   onChange={(newValue) => handleContentChange(activeTab?.id, newValue)}
                   fileName={activeTab?.name}
                   onSave={(content) => saveFileContent(activeTab?.name, content)}
@@ -1251,13 +1258,13 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       </div>
       
       {/* Version History Modal */}
-      {showVersionHistory && activeTab?.type === 'memory' && memoryFiles[activeTab?.id] && (
+      {showVersionHistory && activeTab?.type === 'memory' && memoryFiles[activeTab?.fileId] && (
         <VersionHistory
-          fileId={activeTab.id}
+          fileId={activeTab.fileId}
           fileName={activeTab.name}
-          versions={memoryFiles[activeTab.id].versions || []}
+          versions={memoryFiles[activeTab.fileId].versions || []}
           currentContent={(() => {
-            const memoryFile = memoryFiles[activeTab.id];
+            const memoryFile = memoryFiles[activeTab.fileId];
             if (!memoryFile || !memoryFile.versions || memoryFile.versions.length === 0) {
               return '';
             }
