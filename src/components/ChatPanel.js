@@ -35,13 +35,15 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   const [lastSelectedLine, setLastSelectedLine] = useState(null); // For range selection with shift+click
   const [toast, setToast] = useState(null); // Toast notification state
   
-  // Chat Messages State (new - for streaming functionality)
+  // Chat Messages State
   const [chatMessages, setChatMessages] = useState([]);
-  const [isStreaming, setIsStreaming] = useState(false);
   const [activeGenerationId, setActiveGenerationId] = useState(null);
+  const [sseConnection, setSseConnection] = useState(null);
+  const [progressData, setProgressData] = useState(null);
   
   const textareaRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const sseRef = useRef(null);
   
   // Toast notification function
   const showToast = (message, type = 'warning') => {
@@ -289,114 +291,108 @@ ORDER BY total_spent DESC;
     }
   };
 
-  // Mock data generator for testing streaming (new functionality)
-  const generateMockProgress = (generationId, mentions = []) => {
-    // Check if there are @code mentions with SQL files
-    const codeMentions = mentions.filter(mention => mention.type === 'code');
-    const sqlFiles = codeMentions.filter(mention => 
-      mention.name.toLowerCase().endsWith('.sql') || 
-      mention.name.toLowerCase().includes('sql')
-    );
+  // SSE Connection Management
+  const startSSEConnection = (sessionId, generationId) => {
+    console.log(`🔥 Starting SSE connection for session: ${sessionId}`);
     
-    // Determine the target file - use existing SQL file if mentioned, otherwise create new
-    let targetFileName = 'CustomerMapping.xlsx'; // Default fallback
-    let useExistingFile = false;
-    let targetSqlFile = null;
-    
-    if (sqlFiles.length > 0) {
-      // Use the first SQL file mentioned in @code
-      targetSqlFile = sqlFiles[0];
-      targetFileName = targetSqlFile.name;
-      useExistingFile = true;
+    // Close existing connection if any
+    if (sseConnection) {
+      sseConnection.close();
     }
     
-    const progressSteps = [
-      { stage: "parsing-file", message: "Parsing file", progress: 12, description: "Reading CustomerMapping.xlsx file structure" },
-      { stage: "analyzing", message: "Analyzing", progress: 25, description: "Found 47 column mappings in Customer_Data sheet" },
-      { stage: "generating-joins", message: "Generating joins", progress: 40, description: "Creating JOIN for customer_addresses table" },
-      { stage: "generating-joins", message: "Generating joins", progress: 50, description: "Creating JOIN for customer_orders table" },
-      { stage: "generating-select", message: "Generating select", progress: 65, description: "Adding SELECT for customer_id, customer_name attributes" },
-      { stage: "generating-select", message: "Generating select", progress: 72, description: "Adding SELECT for address, city, state attributes" },
-      { stage: "generating-filters", message: "Generating filters", progress: 85, description: "Adding WHERE for active customers filter" },
-      { stage: "generating-filters", message: "Generating filters", progress: 92, description: "Adding WHERE for date range filter" },
-      { stage: "combining", message: "Combining", progress: 96, description: "Assembling final semantic layer structure" },
-      { stage: "complete", message: "Complete", progress: 100, description: useExistingFile ? `Updated ${targetFileName}` : "Semantic layer ready for review" }
-    ];
-
-    // Start SQL generation in context - pass info about target file
-    if (useExistingFile) {
-      startSqlGeneration(generationId, targetFileName, {
-        useExisting: true,
-        fileData: targetSqlFile,
-        mentions: codeMentions
-      });
-    } else {
-      startSqlGeneration(generationId, targetFileName);
-    }
-
-    let stepIndex = 0;
-    let currentProgressId = null;
+    const eventSource = new EventSource(`http://localhost:8000/api/v1/data/session/${sessionId}/stream`);
     
-    const interval = setInterval(() => {
-      if (stepIndex < progressSteps.length) {
-        const step = progressSteps[stepIndex];
+    eventSource.onopen = () => {
+      console.log('✅ SSE Connection opened');
+    };
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('📡 SSE Event received:', data);
+        console.log('📊 Event details - Type:', data.event_type, 'Stage:', data.data?.stage, 'Status:', data.data?.status);
         
-        // Generate SQL for current stage
-        const sqlContent = buildSqlForStage(step.stage, targetFileName);
-        
-        // Dispatch SQL update to context (for MainEditor)
-        updateSqlStage(step.stage, { 
-          description: step.description,
-          progress: step.progress 
-        }, sqlContent);
-        
-        // Update existing progress message or create new one (for ChatPanel UI)
-        if (currentProgressId) {
-          setChatMessages(prev => prev.map(msg => 
-            msg.id === currentProgressId 
-              ? {
-                  ...msg,
-                  content: step.description,
-                  metadata: {
-                    ...msg.metadata,
-                    progress: step.progress,
-                    currentStage: step.stage,
-                    stageMessage: step.message,
-                    isStreaming: stepIndex < progressSteps.length - 1
-                  }
-                }
-              : msg
-          ));
-        } else {
+        // Update existing progress message or create new one
+        setChatMessages(prev => {
+          console.log('🔄 Updating chat messages with SSE data, current messages count:', prev.length);
+          // Find existing progress message for this generation
+          const existingIndex = prev.findIndex(msg => 
+            msg.type === 'progress' && msg.generationId === generationId
+          );
+          
+          console.log('🔍 Existing progress message index:', existingIndex);
+          
+          // Determine current stage based on status
+          let currentStage = data.data?.stage || data.event_type;
+          let stageStatus = data.data?.status || 'in_progress';
+          
+          // Map backend stage names to frontend stage names
+          const stageMapping = {
+            'analyzing': 'analyzing',
+            'parsing': 'parsing_file',
+            'generating_joins': 'generating_joins',
+            'generating_filters': 'generating_filters', 
+            'generating_select': 'generating_select',
+            'combining': 'combining',
+            'complete': 'complete'
+          };
+          
+          const mappedStage = stageMapping[currentStage] || currentStage;
+          console.log('🎯 Mapped stage:', currentStage, '→', mappedStage, 'Status:', stageStatus);
+          
           const progressMessage = {
-            id: `progress_${generationId}`,
+            id: existingIndex >= 0 ? prev[existingIndex].id : `progress_${Date.now()}`,
             type: 'progress',
-            content: step.description,
-            timestamp: new Date().toISOString(),
+            content: data.message || 'Processing...',
+            timestamp: data.timestamp || new Date().toISOString(),
             generationId,
             metadata: {
-              progress: step.progress,
-              currentStage: step.stage,
-              stageMessage: step.message,
-              isStreaming: stepIndex < progressSteps.length - 1
+              eventType: data.event_type,
+              currentStage: mappedStage,
+              stageStatus: stageStatus,
+              processingStatus: data.data?.processing_status,
+              totalFields: data.data?.total_fields,
+              processedFields: data.data?.processed_fields,
+              sessionId: sessionId
             }
           };
-          setChatMessages(prev => [...prev, progressMessage]);
-          currentProgressId = progressMessage.id;
-        }
+          
+          if (existingIndex >= 0) {
+            console.log('✏️ Updating existing progress message at index:', existingIndex);
+            // Update existing progress message
+            const newMessages = [...prev];
+            newMessages[existingIndex] = progressMessage;
+            return newMessages;
+          } else {
+            console.log('➕ Creating new progress message');
+            // Create new progress message
+            return [...prev, progressMessage];
+          }
+        });
         
-        stepIndex++;
-      } else {
-        clearInterval(interval);
-        setIsStreaming(false);
-        setActiveGenerationId(null);
-        
-        // Complete SQL generation in context
-        completeSqlGeneration();
+      } catch (error) {
+        console.error('❌ Error parsing SSE data:', error);
       }
-    }, 1200);
+    };
+    
+    eventSource.onerror = (error) => {
+      console.error('🔥 SSE Error:', error);
+      eventSource.close();
+      setSseConnection(null);
+    };
+    
+    setSseConnection(eventSource);
   };
-  
+
+  // Clean up SSE connection on unmount
+  useEffect(() => {
+    return () => {
+      if (sseConnection) {
+        sseConnection.close();
+      }
+    };
+  }, [sseConnection]);
+
   // Helper function to get Excel data from AppState
   const getExcelDataForFile = (fileName) => {
     try {
@@ -541,6 +537,48 @@ ORDER BY total_spent DESC;
       isGitHub: selectedFile.isGitHub,
       isCloud: selectedFile.isCloud
     };
+
+    // For @file mentions, extract full content if it's an Excel file
+    if (selectedFile.type === 'file' && isExcelFile(selectedFile.name)) {
+      const excelData = getExcelDataForFile(selectedFile.name);
+      if (excelData) {
+        // Convert Excel data to JSON format with full content
+        const fullExcelContent = {
+          fileName: selectedFile.name,
+          sheets: {}
+        };
+        
+        // Extract all sheets and their data
+        excelData.sheetNames.forEach(sheetName => {
+          const sheetData = excelData.sheetsData[sheetName];
+          fullExcelContent.sheets[sheetName] = {
+            headers: sheetData.headers,
+            rows: sheetData.rows,
+            totalRows: sheetData.totalRows
+          };
+        });
+        
+        // Add the full Excel content to the mention
+        mention.fileContent = {
+          type: 'excel',
+          content: fullExcelContent,
+          contentString: JSON.stringify(fullExcelContent, null, 2)
+        };
+      }
+    }
+    
+    // For @file mentions, extract full content if it's a code file
+    if (selectedFile.type === 'file' && isCodeFile(selectedFile.name)) {
+      const codeContent = getCodeContentForFile(selectedFile.name);
+      if (codeContent) {
+        mention.fileContent = {
+          type: 'code',
+          content: codeContent,
+          contentString: codeContent,
+          totalLines: codeContent.split('\n').length
+        };
+      }
+    }
     
     setSelectedMentions(prev => [...prev, mention]);
     
@@ -829,6 +867,139 @@ ORDER BY total_spent DESC;
       // Generate unique generation ID
       const generationId = `gen_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
+      // Console log file attachment content for debugging
+      if (selectedMentions.length > 0) {
+        console.log('=== FILE ATTACHMENTS BEING SENT ===');
+        selectedMentions.forEach((mention, index) => {
+          console.log(`\nAttachment ${index + 1}:`);
+          console.log(`  Type: ${mention.type}`);
+          console.log(`  Name: ${mention.name}`);
+          console.log(`  Path: ${mention.path || 'N/A'}`);
+          console.log(`  Source: ${mention.source || 'N/A'}`);
+          console.log(`  IsGitHub: ${mention.isGitHub || false}`);
+          console.log(`  IsCloud: ${mention.isCloud || false}`);
+          
+          if (mention.excelData) {
+            console.log(`  Excel Data:`);
+            console.log(`    Sheet: ${mention.excelData.sheetName}`);
+            console.log(`    Row Index: ${mention.excelData.rowIndex}`);
+            console.log(`    Headers:`, mention.excelData.headers);
+            console.log(`    Row Data:`, mention.excelData.rowData);
+          } else if (mention.codeData) {
+            console.log(`  Code Data:`);
+            console.log(`    Lines: ${mention.codeData.startLine}-${mention.codeData.endLine}`);
+            console.log(`    Total Lines: ${mention.codeData.totalLines}`);
+            console.log(`    Content:\n${mention.codeData.content}`);
+          } else if (mention.type === 'file') {
+            console.log(`  File Data:`);
+            
+            // Check if we have extracted file content
+            if (mention.fileContent) {
+              console.log(`    ✅ Full File Content Extracted!`);
+              console.log(`    Content Type: ${mention.fileContent.type}`);
+              
+              if (mention.fileContent.type === 'excel') {
+                const excelContent = mention.fileContent.content;
+                console.log(`    📊 Excel Content Summary:`);
+                console.log(`    File: ${excelContent.fileName}`);
+                console.log(`    Sheets: ${Object.keys(excelContent.sheets).join(', ')}`);
+                
+                Object.keys(excelContent.sheets).forEach(sheetName => {
+                  const sheet = excelContent.sheets[sheetName];
+                  console.log(`    Sheet "${sheetName}":`);
+                  console.log(`      Headers: [${sheet.headers.join(', ')}]`);
+                  console.log(`      Total Rows: ${sheet.totalRows}`);
+                  if (sheet.rows.length > 0) {
+                    console.log(`      First Row: [${sheet.rows[0].join(', ')}]`);
+                  }
+                });
+                
+                console.log(`    📄 JSON String Length: ${mention.fileContent.contentString.length} characters`);
+                console.log(`    📋 Full JSON Content:`);
+                console.log(mention.fileContent.contentString);
+                
+              } else if (mention.fileContent.type === 'code') {
+                console.log(`    💻 Code Content Summary:`);
+                console.log(`    Total Lines: ${mention.fileContent.totalLines}`);
+                console.log(`    Content Length: ${mention.fileContent.content.length} characters`);
+                console.log(`    📄 Full Code Content:`);
+                console.log(mention.fileContent.content);
+              }
+            } else {
+              console.log(`    ⚠️  No content extracted - file may not be loaded in memory or unsupported type`);
+            }
+          } else {
+            console.log(`  ⚠️  Unknown attachment type or no content data`);
+          }
+        });
+        console.log('=== END FILE ATTACHMENTS ===\n');
+      }
+
+      // Send Excel JSON data to backend if available
+      const excelAttachments = selectedMentions.filter(mention => 
+        mention.type === 'file' && 
+        mention.fileContent && 
+        mention.fileContent.type === 'excel'
+      );
+
+      if (excelAttachments.length > 0) {
+        console.log('🚀 Sending Excel data to backend...');
+        
+        excelAttachments.forEach(async (attachment, index) => {
+          try {
+            // Send the Excel content directly as JSON string
+            const payload = attachment.fileContent.contentString;
+
+            console.log(`📤 Sending Excel file ${index + 1}: ${attachment.name}`);
+            console.log('📦 JSON Payload Length:', payload.length, 'characters');
+            console.log('📋 JSON Content Preview:', payload.substring(0, 500) + '...');
+
+            const response = await fetch('http://localhost:8000/api/v1/data/upload-excel-json', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: payload
+            });
+
+            console.log(`📡 Response Status: ${response.status} ${response.statusText}`);
+            
+            if (response.ok) {
+              const responseData = await response.json();
+              console.log('✅ Backend Response Success:', responseData);
+              
+              // Handle the backend response with question
+              if (responseData.status === 'success' && responseData.question) {
+                setTimeout(() => {
+                  const questionMessage = {
+                    id: `question_${Date.now()}`,
+                    type: 'question',
+                    content: responseData.question.question,
+                    timestamp: new Date().toISOString(),
+                    generationId,
+                    metadata: {
+                      sessionId: responseData.session_id,
+                      questionId: responseData.question.question_id,
+                      questionType: responseData.question.question_type,
+                      options: responseData.question.options,
+                      required: responseData.question.required,
+                      description: responseData.question.description,
+                      dataSummary: responseData.data_summary
+                    }
+                  };
+                  setChatMessages(prev => [...prev, questionMessage]);
+                }, 200);
+              }
+            } else {
+              const errorText = await response.text();
+              console.error('❌ Backend Response Error:', errorText);
+            }
+          } catch (error) {
+            console.error('🔥 Network Error sending Excel data:', error);
+          }
+        });
+      }
+      
       // Add user message to chat history
       const userMessage = {
         id: `msg_${Date.now()}`,
@@ -844,48 +1015,14 @@ ORDER BY total_spent DESC;
           isGitHub: mention.isGitHub,
           isCloud: mention.isCloud,
           excelData: mention.excelData || null,
-          codeData: mention.codeData || null
+          codeData: mention.codeData || null,
+          fileContent: mention.fileContent || null
         }))
       };
       
       setChatMessages(prev => [...prev, userMessage]);
       
-      // Set streaming state
-      setIsStreaming(true);
-      setActiveGenerationId(generationId);
-      
-      // Add initial AI response
-      setTimeout(() => {
-        // Check if there are @code mentions with SQL files
-        const codeMentions = selectedMentions.filter(mention => mention.type === 'code');
-        const sqlFiles = codeMentions.filter(mention => 
-          mention.name.toLowerCase().endsWith('.sql') || 
-          mention.name.toLowerCase().includes('sql')
-        );
-        
-        let responseContent = 'I\'ll help you generate the semantic layer. Let me analyze your mapping document and start the generation process.';
-        
-        if (sqlFiles.length > 0) {
-          const sqlFile = sqlFiles[0];
-          responseContent = `I'll help you modify the existing SQL file "${sqlFile.name}". Let me analyze the referenced code and update it based on your requirements.`;
-        }
-        
-        const aiMessage = {
-          id: `msg_${Date.now() + 1}`,
-          type: 'ai',
-          content: responseContent,
-          timestamp: new Date().toISOString(),
-          generationId
-        };
-        setChatMessages(prev => [...prev, aiMessage]);
-        
-        // Start mock progress after a brief delay
-        setTimeout(() => {
-          generateMockProgress(generationId, selectedMentions);
-        }, 1000);
-      }, 500);
-      
-      // Clear input and mentions (existing logic)
+      // Clear input and mentions
       setChatInput('');
       setSelectedMentions([]);
     }
@@ -1018,49 +1155,84 @@ ORDER BY total_spent DESC;
   );
 
   const renderProgressMessage = (message) => {
-    // Extract progress data
-    const progress = message.metadata?.progress || 0;
-    const currentStage = message.metadata?.currentStage;
-    const stageMessage = message.metadata?.stageMessage;
-    const isStreaming = message.metadata?.isStreaming;
+    const { eventType, processingStatus, totalFields, currentStage, stageStatus } = message.metadata || {};
     
-    // Define workflow stages
+    // Use currentStage from metadata
+    const activeStage = currentStage;
+    
+    // Define progress stages based on event types
     const stages = [
-      { id: "parsing-file", label: "Parsing file" },
-      { id: "analyzing", label: "Analyzing" },
-      { id: "generating-joins", label: "Generating joins" },
-      { id: "generating-filters", label: "Generating filters" },
-      { id: "generating-select", label: "Generating select" },
-      { id: "combining", label: "Combining" },
-      { id: "complete", label: "Complete" }
+      { id: "analyzing", label: "Analyzing", number: 1 },
+      { id: "parsing_file", label: "Parsing file", number: 2 },
+      { id: "generating_joins", label: "Generating joins", number: 3 },
+      { id: "generating_filters", label: "Generating filters", number: 4 },
+      { id: "generating_select", label: "Generating select", number: 5 },
+      { id: "combining", label: "Combining", number: 6 },
+      { id: "complete", label: "Complete", number: 7 }
     ];
     
     const getStageStatus = (stageId) => {
-      if (currentStage === stageId) return 'active';
-      const currentIndex = stages.findIndex(s => s.id === currentStage);
+      const currentIndex = stages.findIndex(s => s.id === activeStage);
       const stageIndex = stages.findIndex(s => s.id === stageId);
-      if (currentIndex > stageIndex) return 'complete';
-      return 'pending';
+      
+      // Debug logging
+      console.log(`🔍 Stage ${stageId}: currentStage=${activeStage}, stageStatus=${stageStatus}, currentIndex=${currentIndex}, stageIndex=${stageIndex}`);
+      
+      if (stageId === activeStage) {
+        // Current active stage - check if completed or in progress
+        const status = stageStatus === 'completed' ? 'complete' : 'active';
+        console.log(`🎯 Current stage ${stageId} status: ${status}`);
+        return status;
+      } else if (stageIndex < currentIndex) {
+        // All previous stages are always complete when we've moved past them
+        console.log(`✅ Previous stage ${stageId}: complete`);
+        return 'complete';
+      } else if (stageIndex === currentIndex && stageStatus === 'completed') {
+        // Current stage is completed
+        console.log(`🏁 Current completed stage ${stageId}: complete`);
+        return 'complete';
+      } else {
+        // Future stages are pending
+        console.log(`⏳ Future stage ${stageId}: pending`);
+        return 'pending';
+      }
     };
+
+    // Calculate overall progress percentage based on completed stages
+    const currentStageIndex = stages.findIndex(s => s.id === activeStage);
+    let progressPercentage = 0;
+    
+    if (currentStageIndex >= 0) {
+      // Add completed stages
+      progressPercentage = (currentStageIndex / stages.length) * 100;
+      
+      // Add partial progress for current stage if completed
+      if (stageStatus === 'completed') {
+        progressPercentage += (1 / stages.length) * 100;
+      } else if (stageStatus === 'in_progress') {
+        // Add partial progress for in-progress stage
+        progressPercentage += (0.5 / stages.length) * 100;
+      }
+    }
+    
+    progressPercentage = Math.round(progressPercentage);
 
     return (
       <div key={message.id} className="flex justify-start mb-3">
         <div className="max-w-[90%] w-full border border-gray-600 rounded-lg p-3 bg-gray-800/50">
-          {/* Minimalist Progress Bar */}
+          {/* Progress indicator with stages */}
           <div className="mb-3">
-            {/* Stage indicators with alternating top/bottom labels */}
             <div className="relative flex items-center justify-between mb-2 px-2 sm:px-4" style={{ height: '70px' }}>
-              {/* Background connection line - thicker */}
+              {/* Background connection line */}
               <div className="absolute top-1/2 left-4 right-4 sm:left-6 sm:right-6 h-0.5 bg-gray-600 transform -translate-y-1/2"></div>
               
               {stages.map((stage, index) => {
                 const status = getStageStatus(stage.id);
-                const stageNumber = index + 1;
-                const isTop = index % 2 === 0; // Alternate top/bottom
+                const isTop = index % 2 === 0;
                 
                 return (
                   <div key={stage.id} className="relative flex flex-col items-center z-10">
-                    {/* Label on top for even indices - more spacing */}
+                    {/* Label on top for even indices */}
                     {isTop && (
                       <span className={`text-xs mb-3 text-white font-normal text-center leading-tight ${
                         status === 'active' ? 'opacity-100' : 'opacity-60'
@@ -1069,20 +1241,22 @@ ORDER BY total_spent DESC;
                       </span>
                     )}
                     
-                    {/* Circle with number - green only for "complete" stage */}
+                    {/* Circle with number */}
                     <div className={`w-4 h-4 rounded-full border transition-all duration-300 flex items-center justify-center text-xs font-medium ${
-                      status === 'complete' && stage.id === 'complete'
-                        ? 'bg-green-700 text-white border-green-500' 
-                        : status === 'complete' 
-                        ? 'bg-white text-gray-800 border-gray-300'
+                      status === 'complete'
+                        ? 'bg-green-600 text-white border-green-500' 
+                        : status === 'active' && stageStatus === 'in_progress'
+                        ? 'bg-blue-500 text-white border-blue-400 animate-pulse'
+                        : status === 'active' && stageStatus === 'completed'
+                        ? 'bg-green-500 text-white border-green-400'
                         : status === 'active'
                         ? 'bg-blue-500 text-white border-blue-400'
                         : 'bg-gray-500 text-white border-gray-400'
                     }`}>
-                      {stageNumber}
+                      {status === 'complete' ? '✓' : stage.number}
                     </div>
                     
-                    {/* Label on bottom for odd indices - more spacing */}
+                    {/* Label on bottom for odd indices */}
                     {!isTop && (
                       <span className={`text-xs mt-3 text-white font-normal text-center leading-tight ${
                         status === 'active' ? 'opacity-100' : 'opacity-60'
@@ -1095,25 +1269,236 @@ ORDER BY total_spent DESC;
               })}
             </div>
             
-            {/* Current stage message - top left aligned with underline */}
+            {/* Current stage message */}
             <div className="text-left px-2 mb-2">
               <span className="text-white text-sm font-medium border-b border-gray-500 pb-1 inline-block">
-                {stageMessage || 'Processing...'}
+                {activeStage ? activeStage.replace('_', ' ').charAt(0).toUpperCase() + activeStage.replace('_', ' ').slice(1) : 'Processing...'}
+                {stageStatus && (
+                  <span className={`ml-2 text-xs px-2 py-1 rounded ${
+                    stageStatus === 'completed' 
+                      ? 'bg-green-600 text-white' 
+                      : stageStatus === 'in_progress'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-600 text-white'
+                  }`}>
+                    {stageStatus === 'in_progress' ? 'In Progress' : stageStatus === 'completed' ? 'Completed' : stageStatus}
+                  </span>
+                )}
               </span>
-              {isStreaming && (
+              {activeStage && activeStage !== 'complete' && stageStatus === 'in_progress' && (
                 <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse mt-1 ml-2"></span>
               )}
             </div>
           </div>
           
-          {/* Description Box - responsive */}
+          {/* Description Box */}
           <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg px-3 py-2`}>
             <div className="text-white text-sm leading-relaxed">
               {message.content}
             </div>
+            {processingStatus && (
+              <div className="text-gray-400 text-xs mt-2">
+                Fields: {processingStatus.fields_completed}/{processingStatus.total_fields} completed
+                {processingStatus.fields_processing > 0 && ` • ${processingStatus.fields_processing} processing`}
+              </div>
+            )}
             <div className="text-gray-400 text-xs mt-1">
-              {progress}% • {new Date(message.timestamp).toLocaleTimeString()}
+              {progressPercentage}% • {new Date(message.timestamp).toLocaleTimeString()}
             </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderQuestionMessage = (message) => {
+    const { options, description, questionType } = message.metadata || {};
+    
+    const handleOptionSelect = async (selectedOption) => {
+      console.log('Selected option:', selectedOption);
+      
+      // Add user response message to show selection
+      const userResponse = {
+        id: `response_${Date.now()}`,
+        type: 'user',
+        content: selectedOption,
+        timestamp: new Date().toISOString(),
+        generationId: message.generationId
+      };
+      setChatMessages(prev => [...prev, userResponse]);
+      
+      // Send selection back to backend with session ID
+      const { sessionId, questionId, questionType } = message.metadata;
+      
+      // Start SSE connection immediately for second question to catch all events
+      if (questionId === 2) {
+        console.log('🔥 Starting SSE for processing before second question submission');
+        
+        // Create initial progress message
+        const initialProgressMessage = {
+          id: `progress_${Date.now()}`,
+          type: 'progress',
+          content: 'Starting data analysis...',
+          timestamp: new Date().toISOString(),
+          generationId: message.generationId,
+          metadata: {
+            eventType: 'analyzing',
+            currentStage: 'analyzing',
+            stageStatus: 'in_progress',
+            sessionId: sessionId
+          }
+        };
+        setChatMessages(prev => [...prev, initialProgressMessage]);
+        
+        // Start SSE connection and wait a bit for it to establish
+        startSSEConnection(sessionId, message.generationId);
+        
+        // Small delay to ensure SSE connection is ready
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      
+      try {
+        const answerPayload = {
+          question_id: questionId,
+          answer: selectedOption,
+          question_type: questionType
+        };
+
+        console.log(`🚀 Sending answer to session: ${sessionId}`);
+        console.log('📦 Answer Payload:', answerPayload);
+
+        const response = await fetch(`http://localhost:8000/api/v1/data/session/${sessionId}/answer`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(answerPayload)
+        });
+
+        console.log(`📡 Answer Response Status: ${response.status} ${response.statusText}`);
+        
+        if (response.ok) {
+          const responseData = await response.json();
+          console.log('✅ Answer Response Success:', responseData);
+          
+          // Handle the next question or completion response
+          if (responseData.status === 'success' && responseData.next_question) {
+            // Next question received
+            setTimeout(() => {
+              const nextQuestionMessage = {
+                id: `question_${Date.now()}`,
+                type: 'question',
+                content: responseData.next_question.question,
+                timestamp: new Date().toISOString(),
+                generationId: message.generationId,
+                metadata: {
+                  sessionId: sessionId, // Keep the same session ID
+                  questionId: responseData.next_question.question_id,
+                  questionType: responseData.next_question.question_type,
+                  options: responseData.next_question.options,
+                  required: responseData.next_question.required,
+                  description: responseData.next_question.description
+                }
+              };
+              setChatMessages(prev => [...prev, nextQuestionMessage]);
+            }, 300);
+          } else if (responseData.status === 'success' && responseData.question) {
+            // Another question received (fallback for original structure)
+            setTimeout(() => {
+              const nextQuestionMessage = {
+                id: `question_${Date.now()}`,
+                type: 'question',
+                content: responseData.question.question,
+                timestamp: new Date().toISOString(),
+                generationId: message.generationId,
+                metadata: {
+                  sessionId: sessionId, // Keep the same session ID
+                  questionId: responseData.question.question_id,
+                  questionType: responseData.question.question_type,
+                  options: responseData.question.options,
+                  required: responseData.question.required,
+                  description: responseData.question.description
+                }
+              };
+              setChatMessages(prev => [...prev, nextQuestionMessage]);
+            }, 300);
+          } else if (responseData.status === 'success' && responseData.message) {
+            // Session completed - don't show completion message since we have progress tracking
+            console.log('✅ Session completed:', responseData.message);
+            // Note: We're not adding a completion message to chat since progress tracking handles the final state
+          }
+        } else {
+          const errorText = await response.text();
+          console.error('❌ Answer Response Error:', errorText);
+          
+          // Show error message in chat
+          setTimeout(() => {
+            const errorMessage = {
+              id: `error_${Date.now()}`,
+              type: 'ai',
+              content: 'Sorry, there was an error processing your selection. Please try again.',
+              timestamp: new Date().toISOString(),
+              generationId: message.generationId
+            };
+            setChatMessages(prev => [...prev, errorMessage]);
+          }, 300);
+        }
+      } catch (error) {
+        console.error('🔥 Network Error sending answer:', error);
+        
+        // Show network error message in chat
+        setTimeout(() => {
+          const networkErrorMessage = {
+            id: `network_error_${Date.now()}`,
+            type: 'ai',
+            content: 'Network error occurred. Please check your connection and try again.',
+            timestamp: new Date().toISOString(),
+            generationId: message.generationId
+          };
+          setChatMessages(prev => [...prev, networkErrorMessage]);
+        }, 300);
+      }
+    };
+
+    return (
+      <div key={message.id} className="flex justify-start mb-4">
+        <div className="max-w-[90%] w-full">
+          <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg p-4`}>
+            {/* Question Text */}
+            <div className={`${colors.text} text-sm mb-3 leading-relaxed`}>
+              {message.content}
+            </div>
+            
+            {/* Description */}
+            {description && (
+              <div className={`${colors.textSecondary} text-xs mb-4 italic`}>
+                {description}
+              </div>
+            )}
+            
+            {/* Options as Chips/Tags */}
+            {options && options.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {options.map((option, index) => (
+                  <button
+                    key={index}
+                    onClick={() => handleOptionSelect(option)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all duration-200
+                      bg-gray-700 text-gray-300 border border-gray-600
+                      hover:bg-gray-600 hover:text-white hover:border-gray-500
+                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50
+                      cursor-pointer`}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          
+          {/* Timestamp */}
+          <div className={`text-xs ${colors.textMuted} mt-1`}>
+            Question • {new Date(message.timestamp).toLocaleTimeString()}
           </div>
         </div>
       </div>
@@ -1158,6 +1543,8 @@ ORDER BY total_spent DESC;
         return renderUserMessage(message);
       case 'ai':
         return renderAiMessage(message);
+      case 'question':
+        return renderQuestionMessage(message);
       case 'progress':
         return renderProgressMessage(message);
       case 'code':
@@ -1166,6 +1553,17 @@ ORDER BY total_spent DESC;
         return null;
     }
   };
+
+  // Cleanup effect for SSE
+  useEffect(() => {
+    return () => {
+      if (sseRef.current) {
+        console.log('🧹 Cleaning up SSE connection on unmount');
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <div 
