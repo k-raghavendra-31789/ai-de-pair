@@ -303,24 +303,41 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
   const saveFileContent = useCallback(async (fileName, content) => {
     try {
+      console.log('💾 saveFileContent called:', {
+        fileName,
+        contentLength: content?.length,
+        contentPreview: content?.substring(0, 100)
+      });
+      
       // Don't save deleted files
       if (deletedFiles.has(fileName)) {
+        console.log('❌ File is deleted, skipping save:', fileName);
         return;
       }
 
       // Check tab type
       const currentTab = openTabs.find(tab => tab.name === fileName);
       const isMemoryFile = currentTab?.type === 'memory';
+      
+      console.log('📋 Tab info:', {
+        tabFound: !!currentTab,
+        tabType: currentTab?.type,
+        fileId: currentTab?.fileId,
+        isMemoryFile
+      });
 
       if (isMemoryFile) {
+        console.log('💾 Saving memory file:', currentTab.fileId, 'with content length:', content?.length);
         // For memory files, update the memory content
         updateMemoryFile(currentTab.fileId, content);
+        console.log('✅ Memory file updated');
         
         // Mark tab as clean
         const updatedTabs = openTabs.map(tab => 
           tab.name === fileName ? { ...tab, isDirty: false } : tab
         );
         updateTabs(updatedTabs);
+        console.log('✅ Tab marked as clean');
         return;
       }
 
@@ -425,7 +442,14 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       if ((event.ctrlKey || event.metaKey) && event.key === 's') {
         event.preventDefault();
         if (activeTab) {
-          const content = fileContents[activeTab.name] || '';
+          // Get content based on tab type
+          let content;
+          if (activeTab.type === 'memory') {
+            content = getCurrentMemoryFileContent(activeTab.fileId);
+          } else {
+            content = fileContents[activeTab.name] || '';
+          }
+          console.log('💾 Saving file:', activeTab.name, 'Type:', activeTab.type, 'Content length:', content?.length);
           saveFileContent(activeTab.name, content);
         }
       }
@@ -433,7 +457,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTab, fileContents, saveFileContent]);
+  }, [activeTab, fileContents, saveFileContent, getCurrentMemoryFileContent]);
 
   // Add keyboard shortcuts
   useEffect(() => {
@@ -443,7 +467,14 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         e.preventDefault();
         const currentActiveTab = openTabs.find(tab => tab.isActive);
         if (currentActiveTab) {
-          const content = fileContents[currentActiveTab.name] || '';
+          // Get content based on tab type
+          let content;
+          if (currentActiveTab.type === 'memory') {
+            content = getCurrentMemoryFileContent(currentActiveTab.fileId);
+          } else {
+            content = fileContents[currentActiveTab.name] || '';
+          }
+          console.log('💾 Saving file (duplicate handler):', currentActiveTab.name, 'Type:', currentActiveTab.type, 'Content length:', content?.length);
           saveFileContent(currentActiveTab.name, content);
         }
       }
@@ -451,7 +482,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [openTabs, fileContents, saveFileContent]);
+  }, [openTabs, fileContents, saveFileContent, getCurrentMemoryFileContent]);
 
   // SQL Generation Hooks
   

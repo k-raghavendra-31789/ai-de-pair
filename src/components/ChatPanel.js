@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useTheme } from './ThemeContext';
 import { useAppState } from '../contexts/AppStateContext';
 import CustomScrollbar from './CustomScrollbar';
@@ -18,7 +18,10 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
     completeSqlGeneration,
     resetSqlGeneration,
     addTab,
-    setActiveTab
+    setActiveTab,
+    addMemoryFile,
+    updateTabs,
+    updateMemoryFile
   } = actions;
   
   // @mention detection state
@@ -40,6 +43,7 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   const [activeGenerationId, setActiveGenerationId] = useState(null);
   const [sseConnection, setSseConnection] = useState(null);
   const [progressData, setProgressData] = useState(null);
+  const [processingStrategy, setProcessingStrategy] = useState(null); // Store strategy selection
   
   const textareaRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -303,14 +307,241 @@ ORDER BY total_spent DESC;
     const eventSource = new EventSource(`http://localhost:8000/api/v1/data/session/${sessionId}/stream`);
     
     eventSource.onopen = () => {
-      console.log('✅ SSE Connection opened');
+      console.log('✅ SSE Connection opened successfully');
+      console.log('🔗 SSE URL:', `http://localhost:8000/api/v1/data/session/${sessionId}/stream`);
+      console.log('🔗 Session ID:', sessionId);
+      console.log('🔗 Generation ID:', generationId);
     };
     
     eventSource.onmessage = (event) => {
+      console.log('🚨 SSE EVENT RECEIVED - Raw data:', event.data);
+      console.log('🚨 SSE EVENT RECEIVED - Event object:', event);
+      
       try {
+        console.log('🔧 Raw SSE event data:', event.data);
         const data = JSON.parse(event.data);
         console.log('📡 SSE Event received:', data);
         console.log('📊 Event details - Type:', data.event_type, 'Stage:', data.data?.stage, 'Status:', data.data?.status);
+        
+        // Handle connection closing event - this is the final event
+        if (data.event_type === 'connection_closing') {
+          console.log('🔌 Received connection_closing event - closing SSE');
+          if (eventSource.completionTimeoutId) {
+            clearTimeout(eventSource.completionTimeoutId);
+          }
+          if (eventSource.debugInterval) {
+            clearInterval(eventSource.debugInterval);
+          }
+          eventSource.close();
+          setSseConnection(null);
+          return;
+        }
+        
+        console.log('🏗️ Column tracking data:', data.data?.column_tracking);
+        console.log('📋 Field tracking data:', data.data?.field_tracking);
+        console.log('🔍 Checking for extracted_sql:', data.data?.extracted_sql, data.extracted_sql);
+        console.log('🔍 Full event data structure:', JSON.stringify(data, null, 2));
+        
+        // Handle completion event with SQL result - check multiple completion indicators
+        // Check for nested message structure first (your backend format)
+        const extractedSQL = data.message?.data?.extracted_sql || 
+                           data.data?.extracted_sql || 
+                           data.extracted_sql;
+        
+        // Check completion indicators in nested structure
+        const isCompleted = extractedSQL || 
+                           data.message?.status === 'success' ||
+                           data.message?.event_type === 'completion' ||
+                           data.message?.processing_status === 'completed' ||
+                           data.data?.status === 'completed' || 
+                           data.status === 'completed' ||
+                           data.event_type === 'completion' ||
+                           data.event_type === 'single_pass_processing_complete' ||
+                           (typeof data.message === 'string' && data.message?.includes('completed successfully')) ||
+                           (typeof data.message?.message === 'string' && data.message?.message?.includes('completed successfully'));
+        
+        console.log('🎯 Completion check - extractedSQL:', !!extractedSQL, 'isCompleted:', isCompleted);
+        console.log('🔍 Detailed completion check:');
+        console.log('  - data.message?.data?.extracted_sql:', data.message?.data?.extracted_sql ? 'FOUND' : 'NOT FOUND');
+        console.log('  - data.data?.extracted_sql:', data.data?.extracted_sql ? 'FOUND' : 'NOT FOUND');
+        console.log('  - data.extracted_sql:', data.extracted_sql ? 'FOUND' : 'NOT FOUND'); 
+        console.log('  - data.message?.status:', data.message?.status);
+        console.log('  - data.message?.event_type:', data.message?.event_type);
+        console.log('  - data.message?.processing_status:', data.message?.processing_status);
+        console.log('  - data.event_type:', data.event_type);
+        console.log('  - message object type:', typeof data.message);
+        
+        if (isCompleted && extractedSQL) {
+          console.log('🎉 SQL extraction completed:', extractedSQL);
+          console.log('🔄 Updating progress to complete and adding SQL result...');
+          
+          // Update progress to completed state first
+          setChatMessages(prev => {
+            const existingIndex = prev.findIndex(msg => 
+              msg.type === 'progress' && msg.generationId === generationId
+            );
+            
+            console.log('📍 Found progress message at index:', existingIndex);
+            
+            if (existingIndex >= 0) {
+              const completedProgressMessage = {
+                ...prev[existingIndex],
+                metadata: {
+                  ...prev[existingIndex].metadata,
+                  currentStage: 'complete',
+                  stageStatus: 'completed'
+                }
+              };
+              const newMessages = [...prev];
+              newMessages[existingIndex] = completedProgressMessage;
+              console.log('✅ Updated progress message to complete');
+              return newMessages;
+            }
+            return prev;
+          });
+          
+          // Create SQL file immediately and start streaming
+          console.log('➕ Creating in-memory SQL file and streaming to MainEditor');
+          
+          // Create unique identifiers
+          const timestamp = Date.now();
+          const memoryFileId = `sql_chat_${generationId}_${timestamp}`;
+          const fileName = `chat-generated-sql-${timestamp}.sql`;
+          
+          console.log('📄 Creating memory file with ID:', memoryFileId, 'name:', fileName);
+          console.log('📝 SQL content length:', extractedSQL.length);
+          console.log('📝 SQL content preview:', extractedSQL.substring(0, 100) + '...');
+          
+          // Create in-memory file with empty content initially
+          addMemoryFile(memoryFileId, fileName, '', 'sql', false);
+          console.log('✅ Empty memory file created, starting stream...');
+          
+          // Create new tab for the SQL file
+          const newTab = {
+            id: `tab_${timestamp}`,
+            name: fileName,
+            type: 'memory',
+            fileId: memoryFileId,
+            isGenerated: false,
+            isDirty: false,
+            metadata: {
+              source: 'chat',
+              generationId,
+              modelUsed: data.message?.data?.model_used || data.data?.model_used || data.model_used,
+              processingStrategy: data.message?.data?.processing_strategy || data.data?.processing_strategy || data.processing_strategy,
+              completionMessage: data.message?.message || data.message || 'SQL generation completed'
+            }
+          };
+          
+          console.log('📑 Creating new tab:', newTab);
+          
+          // Add tab and set it as active
+          addTab(newTab);
+          console.log('✅ Tab added to state');
+          
+          setActiveTab(newTab.id);
+          console.log('✅ Active tab set to:', newTab.id);
+          
+          // Start streaming the SQL content
+          streamSQLContent(memoryFileId, extractedSQL);
+          
+          console.log('✅ SQL file created and streaming initiated:', fileName);
+          
+          // Note: Don't close SSE here - wait for connection_closing event
+          return;
+        } else if (isCompleted && !extractedSQL) {
+          console.log('⚠️ Completion detected but no extracted SQL found');
+          console.log('🔍 Searching for SQL in other event fields...');
+          
+          // Try to find SQL in other possible locations
+          const possibleSQL = data.message?.data?.extracted_sql || 
+                             data.message?.data?.sql || 
+                             data.message?.data?.query || 
+                             data.message?.data?.result ||
+                             data.sql || data.query || data.result || 
+                             data.data?.sql || data.data?.query || data.data?.result ||
+                             data.data?.generated_sql || data.generated_sql;
+          
+          if (possibleSQL) {
+            console.log('✨ Found SQL in alternative location:', possibleSQL);
+            
+            // Use the found SQL and create the file with streaming
+            const timestamp = Date.now();
+            const memoryFileId = `sql_chat_${generationId}_${timestamp}`;
+            const fileName = `chat-generated-sql-${timestamp}.sql`;
+            
+            // Create empty memory file initially
+            addMemoryFile(memoryFileId, fileName, '', 'sql', false);
+            
+            const newTab = {
+              id: `tab_${timestamp}`,
+              name: fileName,
+              type: 'memory',
+              fileId: memoryFileId,
+              isGenerated: false,
+              isDirty: false,
+              metadata: {
+                source: 'chat',
+                generationId,
+                modelUsed: data.message?.data?.model_used || data.data?.model_used || data.model_used,
+                processingStrategy: data.message?.data?.processing_strategy || data.data?.processing_strategy || data.processing_strategy,
+                completionMessage: data.message?.message || data.message || 'SQL generation completed'
+              }
+            };
+            
+            addTab(newTab);
+            setActiveTab(newTab.id);
+            
+            // Start streaming the alternative SQL content
+            streamSQLContent(memoryFileId, possibleSQL);
+            
+            console.log('✅ SQL file created from alternative field with streaming:', fileName);
+            return;
+          } else {
+            console.log('❌ No SQL found in any event fields');
+          }
+          // Handle case where completion is indicated but no SQL is present
+          console.log('⚠️ Completion detected but no extracted SQL found');
+          console.log('🔄 Marking progress as complete anyway...');
+          
+          setChatMessages(prev => {
+            const existingIndex = prev.findIndex(msg => 
+              msg.type === 'progress' && msg.generationId === generationId
+            );
+            
+            if (existingIndex >= 0) {
+              const completedProgressMessage = {
+                ...prev[existingIndex],
+                metadata: {
+                  ...prev[existingIndex].metadata,
+                  currentStage: 'complete',
+                  stageStatus: 'completed'
+                }
+              };
+              const newMessages = [...prev];
+              newMessages[existingIndex] = completedProgressMessage;
+              
+              // Add an error message about no SQL being generated
+              newMessages.push({
+                id: `error_${Date.now()}`,
+                type: 'text',
+                content: 'Processing completed but no SQL was generated. Please try rephrasing your question.',
+                timestamp: new Date().toISOString(),
+                generationId,
+                metadata: {
+                  messageType: 'error',
+                  completionMessage: data.message
+                }
+              });
+              
+              return newMessages;
+            }
+            return prev;
+          });
+          
+          // Note: Don't close SSE here - wait for connection_closing event
+          return;
+        }
         
         // Update existing progress message or create new one
         setChatMessages(prev => {
@@ -334,11 +565,25 @@ ORDER BY total_spent DESC;
             'generating_filters': 'generating_filters', 
             'generating_select': 'generating_select',
             'combining': 'combining',
-            'complete': 'complete'
+            'complete': 'complete',
+            // Single pass mapping
+            'generating_sql': 'generating_sql'
           };
           
-          const mappedStage = stageMapping[currentStage] || currentStage;
-          console.log('🎯 Mapped stage:', currentStage, '→', mappedStage, 'Status:', stageStatus);
+          let mappedStage = stageMapping[currentStage] || currentStage;
+          
+          // For single_pass strategy, map multi-stage events to simplified stages
+          if (processingStrategy === 'single_pass') {
+            const singlePassMapping = {
+              'parsing_file': 'generating_sql',
+              'generating_joins': 'generating_sql',
+              'generating_filters': 'generating_sql',
+              'generating_select': 'generating_sql',
+              'combining': 'generating_sql'
+            };
+            mappedStage = singlePassMapping[mappedStage] || mappedStage;
+          }
+          console.log('🎯 Mapped stage:', currentStage, '→', mappedStage, 'Status:', stageStatus, 'Strategy:', processingStrategy);
           
           const progressMessage = {
             id: existingIndex >= 0 ? prev[existingIndex].id : `progress_${Date.now()}`,
@@ -353,7 +598,10 @@ ORDER BY total_spent DESC;
               processingStatus: data.data?.processing_status,
               totalFields: data.data?.total_fields,
               processedFields: data.data?.processed_fields,
-              sessionId: sessionId
+              columnTracking: data.data?.column_tracking,
+              fieldTracking: data.data?.field_tracking,
+              sessionId: sessionId,
+              processingStrategy: existingIndex >= 0 ? prev[existingIndex].metadata?.processingStrategy : processingStrategy
             }
           };
           
@@ -372,22 +620,128 @@ ORDER BY total_spent DESC;
         
       } catch (error) {
         console.error('❌ Error parsing SSE data:', error);
+        console.error('🔧 Raw event data that failed to parse:', event.data);
+        console.error('🔧 Event type:', typeof event.data);
       }
     };
     
     eventSource.onerror = (error) => {
       console.error('🔥 SSE Error:', error);
+      if (eventSource.completionTimeoutId) {
+        clearTimeout(eventSource.completionTimeoutId);
+      }
+      if (eventSource.debugInterval) {
+        clearInterval(eventSource.debugInterval);
+      }
       eventSource.close();
       setSseConnection(null);
     };
     
     setSseConnection(eventSource);
+    
+    // Debug: Periodically log SSE connection status
+    const debugInterval = setInterval(() => {
+      console.log('🔍 SSE Connection Status:', {
+        readyState: eventSource.readyState,
+        url: eventSource.url,
+        sessionId: sessionId,
+        generationId: generationId,
+        connectionStates: {
+          0: 'CONNECTING',
+          1: 'OPEN', 
+          2: 'CLOSED'
+        }[eventSource.readyState]
+      });
+    }, 2000);
+    
+    // Store interval ID for cleanup
+    eventSource.debugInterval = debugInterval;
+    
+    // Also add a safety timeout to handle cases where completion event might be missed
+    const completionTimeoutId = setTimeout(() => {
+      console.log('⏰ Completion timeout reached - checking for completion...');
+      
+      // Check if there were any code messages generated for this generation
+      setChatMessages(prev => {
+        const hasCodeMessage = prev.some(msg => 
+          msg.generationId === generationId && msg.type === 'code'
+        );
+        
+        if (hasCodeMessage) {
+          console.log('✅ Found code message, assuming completion is handled');
+          return prev;
+        }
+        
+        // Check if progress is still showing
+        const progressIndex = prev.findIndex(msg => 
+          msg.type === 'progress' && msg.generationId === generationId
+        );
+        
+        if (progressIndex >= 0 && prev[progressIndex].metadata?.currentStage !== 'complete') {
+          console.log('⚠️ Progress still showing, forcing completion...');
+          const completedProgressMessage = {
+            ...prev[progressIndex],
+            metadata: {
+              ...prev[progressIndex].metadata,
+              currentStage: 'complete',
+              stageStatus: 'completed'
+            }
+          };
+          const newMessages = [...prev];
+          newMessages[progressIndex] = completedProgressMessage;
+          return newMessages;
+        }
+        
+        return prev;
+      });
+    }, 30000); // 30 second timeout
+
+    // Store timeout ID for cleanup
+    eventSource.completionTimeoutId = completionTimeoutId;
   };
+
+  // SQL Content Streaming Function
+  const streamSQLContent = useCallback((memoryFileId, fullSQLContent) => {
+    console.log('🚀 Starting SQL content streaming:', memoryFileId);
+    
+    // Split content into manageable chunks (words or lines)
+    const lines = fullSQLContent.split('\n');
+    let currentContent = '';
+    let lineIndex = 0;
+    
+    const streamNextLine = () => {
+      if (lineIndex < lines.length) {
+        // Add the next line
+        currentContent += (lineIndex > 0 ? '\n' : '') + lines[lineIndex];
+        
+        // Update memory file with current content
+        updateMemoryFile(memoryFileId, currentContent);
+        
+        console.log(`📝 Streamed line ${lineIndex + 1}/${lines.length}:`, lines[lineIndex]);
+        
+        lineIndex++;
+        
+        // Schedule next line with a slight delay for streaming effect
+        setTimeout(streamNextLine, 50); // 50ms delay between lines
+      } else {
+        console.log('✅ SQL streaming completed');
+      }
+    };
+    
+    // Start streaming after a small initial delay
+    setTimeout(streamNextLine, 100);
+  }, [updateMemoryFile]);
 
   // Clean up SSE connection on unmount
   useEffect(() => {
     return () => {
       if (sseConnection) {
+        if (sseConnection.completionTimeoutId) {
+          clearTimeout(sseConnection.completionTimeoutId);
+        }
+        if (sseConnection.debugInterval) {
+          clearInterval(sseConnection.debugInterval);
+        }
         sseConnection.close();
       }
     };
@@ -1117,7 +1471,7 @@ ORDER BY total_spent DESC;
     <div key={message.id} className="flex justify-end mb-4">
       <div className="max-w-[80%]">
         <div className={`${colors.accent} text-white border ${colors.borderLight} rounded-lg px-4 py-2`}>
-          <div className="text-sm">{message.content}</div>
+          <div className="text-sm">{typeof message.content === 'string' ? message.content : 'Message'}</div>
           {message.attachments && message.attachments.length > 0 && (
             <div className="mt-2 pt-2 border-t border-white border-opacity-20">
               <div className="text-xs opacity-90">Attachments:</div>
@@ -1145,7 +1499,7 @@ ORDER BY total_spent DESC;
     <div key={message.id} className="flex justify-start mb-4">
       <div className="max-w-[80%]">
         <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg px-4 py-2`}>
-          <div className={`text-sm ${colors.text}`}>{message.content}</div>
+          <div className={`text-sm ${colors.text}`}>{typeof message.content === 'string' ? message.content : 'AI Response'}</div>
         </div>
         <div className={`text-xs ${colors.textMuted} mt-1`}>
           AI Assistant • {new Date(message.timestamp).toLocaleTimeString()}
@@ -1155,21 +1509,35 @@ ORDER BY total_spent DESC;
   );
 
   const renderProgressMessage = (message) => {
-    const { eventType, processingStatus, totalFields, currentStage, stageStatus } = message.metadata || {};
+    const { eventType, processingStatus, totalFields, currentStage, stageStatus, columnTracking, fieldTracking, processingStrategy } = message.metadata || {};
     
     // Use currentStage from metadata
     const activeStage = currentStage;
     
-    // Define progress stages based on event types
-    const stages = [
-      { id: "analyzing", label: "Analyzing", number: 1 },
-      { id: "parsing_file", label: "Parsing file", number: 2 },
-      { id: "generating_joins", label: "Generating joins", number: 3 },
-      { id: "generating_filters", label: "Generating filters", number: 4 },
-      { id: "generating_select", label: "Generating select", number: 5 },
-      { id: "combining", label: "Combining", number: 6 },
-      { id: "complete", label: "Complete", number: 7 }
-    ];
+    // Define progress stages based on processing strategy
+    const getStagesForStrategy = (strategy) => {
+      if (strategy === 'single_pass') {
+        return [
+          { id: "analyzing", label: "Analyzing", number: 1 },
+          { id: "generating_sql", label: "Generating SQL", number: 2 },
+          { id: "complete", label: "Complete", number: 3 }
+        ];
+      } else {
+        // multi_pass or default
+        return [
+          { id: "analyzing", label: "Analyzing", number: 1 },
+          { id: "parsing_file", label: "Parsing file", number: 2 },
+          { id: "generating_joins", label: "Generating joins", number: 3 },
+          { id: "generating_filters", label: "Generating filters", number: 4 },
+          { id: "generating_select", label: "Generating select", number: 5 },
+          { id: "combining", label: "Combining", number: 6 },
+          { id: "complete", label: "Complete", number: 7 }
+        ];
+      }
+    };
+    
+    const stages = getStagesForStrategy(processingStrategy);
+    console.log('🎯 Using stages for strategy:', processingStrategy, stages);
     
     const getStageStatus = (stageId) => {
       const currentIndex = stages.findIndex(s => s.id === activeStage);
@@ -1216,6 +1584,29 @@ ORDER BY total_spent DESC;
     }
     
     progressPercentage = Math.round(progressPercentage);
+
+    // Process column tracking data
+    const getColumnStats = () => {
+      if (!columnTracking) return null;
+      
+      const columns = Object.entries(columnTracking);
+      const totalColumns = columns.length;
+      const completedColumns = columns.filter(([_, column]) => column.status === 'completed').length;
+      const processingColumns = columns.filter(([_, column]) => column.status === 'processing').length;
+      const pendingColumns = columns.filter(([_, column]) => column.status === 'pending').length;
+      const errorColumns = columns.filter(([_, column]) => column.status === 'error').length;
+      
+      return {
+        total: totalColumns,
+        completed: completedColumns,
+        processing: processingColumns,
+        pending: pendingColumns,
+        error: errorColumns,
+        columns: columns
+      };
+    };
+
+    const columnStats = getColumnStats();
 
     return (
       <div key={message.id} className="flex justify-start mb-3">
@@ -1294,14 +1685,61 @@ ORDER BY total_spent DESC;
           {/* Description Box */}
           <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg px-3 py-2`}>
             <div className="text-white text-sm leading-relaxed">
-              {message.content}
+              {typeof message.content === 'string' ? message.content : 'Processing...'}
             </div>
+            
+            {/* Field Level Progress */}
             {processingStatus && (
               <div className="text-gray-400 text-xs mt-2">
                 Fields: {processingStatus.fields_completed}/{processingStatus.total_fields} completed
                 {processingStatus.fields_processing > 0 && ` • ${processingStatus.fields_processing} processing`}
               </div>
             )}
+            
+            {/* Column Level Progress */}
+            {columnStats && (
+              <div className="text-gray-400 text-xs mt-1">
+                <div className="flex items-center gap-4">
+                  <span>Columns: {columnStats.completed}/{columnStats.total} completed</span>
+                  {columnStats.processing > 0 && (
+                    <span className="text-blue-400">{columnStats.processing} processing</span>
+                  )}
+                  {columnStats.error > 0 && (
+                    <span className="text-red-400">{columnStats.error} errors</span>
+                  )}
+                </div>
+                
+                {/* Column Details */}
+                {columnStats.columns.length > 0 && activeStage !== 'complete' && (
+                  <div className="mt-2 max-h-24 overflow-y-auto">
+                    {columnStats.columns.slice(0, 5).map(([columnKey, column]) => (
+                      <div key={columnKey} className="flex items-center justify-between py-1 text-xs">
+                        <span className="truncate max-w-[200px]" title={column.column_name}>
+                          {column.column_name}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded text-xs ${
+                          column.status === 'completed' 
+                            ? 'bg-green-600/20 text-green-400' 
+                            : column.status === 'processing'
+                            ? 'bg-blue-600/20 text-blue-400'
+                            : column.status === 'error'
+                            ? 'bg-red-600/20 text-red-400'
+                            : 'bg-gray-600/20 text-gray-400'
+                        }`}>
+                          {column.status}
+                        </span>
+                      </div>
+                    ))}
+                    {columnStats.columns.length > 5 && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        ... and {columnStats.columns.length - 5} more columns
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            
             <div className="text-gray-400 text-xs mt-1">
               {progressPercentage}% • {new Date(message.timestamp).toLocaleTimeString()}
             </div>
@@ -1317,11 +1755,17 @@ ORDER BY total_spent DESC;
     const handleOptionSelect = async (selectedOption) => {
       console.log('Selected option:', selectedOption);
       
+      // Find the option object to get the label for display
+      const optionObj = options.find(opt => 
+        (typeof opt === 'object' && opt.value === selectedOption) || opt === selectedOption
+      );
+      const displayLabel = (typeof optionObj === 'object' && optionObj.label) ? optionObj.label : selectedOption;
+      
       // Add user response message to show selection
       const userResponse = {
         id: `response_${Date.now()}`,
         type: 'user',
-        content: selectedOption,
+        content: displayLabel,
         timestamp: new Date().toISOString(),
         generationId: message.generationId
       };
@@ -1330,9 +1774,16 @@ ORDER BY total_spent DESC;
       // Send selection back to backend with session ID
       const { sessionId, questionId, questionType } = message.metadata;
       
-      // Start SSE connection immediately for second question to catch all events
-      if (questionId === 2) {
-        console.log('🔥 Starting SSE for processing before second question submission');
+      // Store processing strategy for SSE stage customization
+      if (questionId === 3 && questionType === 'strategy_selection') {
+        console.log('💾 Storing processing strategy:', selectedOption);
+        setProcessingStrategy(selectedOption);
+      }
+      
+      // Start SSE connection immediately for third question to catch all events
+      if (questionId === 3) {
+        console.log('🔥 Starting SSE for processing before third question submission');
+        console.log('🎯 Selected strategy:', selectedOption);
         
         // Create initial progress message
         const initialProgressMessage = {
@@ -1345,13 +1796,18 @@ ORDER BY total_spent DESC;
             eventType: 'analyzing',
             currentStage: 'analyzing',
             stageStatus: 'in_progress',
-            sessionId: sessionId
+            sessionId: sessionId,
+            processingStrategy: selectedOption // Store strategy in progress message
           }
         };
         setChatMessages(prev => [...prev, initialProgressMessage]);
         
         // Start SSE connection and wait a bit for it to establish
+        console.log('🚀 About to start SSE connection...');
+        console.log('🚀 Session ID:', sessionId);
+        console.log('🚀 Generation ID:', message.generationId);
         startSSEConnection(sessionId, message.generationId);
+        console.log('🚀 SSE connection start call completed');
         
         // Small delay to ensure SSE connection is ready
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -1466,7 +1922,7 @@ ORDER BY total_spent DESC;
           <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg p-4`}>
             {/* Question Text */}
             <div className={`${colors.text} text-sm mb-3 leading-relaxed`}>
-              {message.content}
+              {typeof message.content === 'string' ? message.content : 'Question'}
             </div>
             
             {/* Description */}
@@ -1478,20 +1934,38 @@ ORDER BY total_spent DESC;
             
             {/* Options as Chips/Tags */}
             {options && options.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {options.map((option, index) => (
-                  <button
-                    key={index}
-                    onClick={() => handleOptionSelect(option)}
-                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all duration-200
-                      bg-gray-700 text-gray-300 border border-gray-600
-                      hover:bg-gray-600 hover:text-white hover:border-gray-500
-                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50
-                      cursor-pointer`}
-                  >
-                    {option}
-                  </button>
-                ))}
+              <div className="flex flex-col gap-3">
+                {options.map((option, index) => {
+                  // Handle both string options and object options with label/description
+                  const isObjectOption = typeof option === 'object' && option.label;
+                  const optionValue = isObjectOption ? option.value : option;
+                  const optionLabel = isObjectOption ? option.label : option;
+                  const optionDescription = isObjectOption ? option.description : null;
+                  
+                  return (
+                    <div key={index} className="w-full">
+                      <button
+                        onClick={() => handleOptionSelect(optionValue)}
+                        className={`w-full px-4 py-3 rounded-lg text-left transition-all duration-200
+                          bg-gray-700 text-gray-300 border border-gray-600
+                          hover:bg-gray-600 hover:text-white hover:border-gray-500
+                          focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50
+                          cursor-pointer`}
+                      >
+                        <div className="flex flex-col gap-1">
+                          <div className="text-sm font-medium text-white">
+                            {optionLabel}
+                          </div>
+                          {optionDescription && (
+                            <div className="text-xs text-gray-400 leading-relaxed">
+                              {optionDescription}
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1505,37 +1979,70 @@ ORDER BY total_spent DESC;
     );
   };
 
-  const renderCodeMessage = (message) => (
-    <div key={message.id} className="flex justify-start mb-4">
-      <div className="max-w-[95%] w-full">
-        <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg overflow-hidden`}>
-          <div className={`flex items-center justify-between px-4 py-2 ${colors.secondary} border-b ${colors.borderLight}`}>
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${colors.successBg}`}></span>
-              <span className={`${colors.text} text-xs font-mono`}>
-                {message.metadata?.blockType?.replace('_', ' ').toUpperCase() || 'SQL'} 
-              </span>
+  const renderCodeMessage = (message) => {
+    const { blockType, modelUsed, processingStrategy, completionMessage } = message.metadata || {};
+    const isGeneratedSQL = completionMessage; // This indicates it's a final SQL result
+    
+    // Ensure completionMessage is a string
+    const completionText = typeof completionMessage === 'string' 
+      ? completionMessage 
+      : typeof completionMessage === 'object' 
+      ? JSON.stringify(completionMessage) 
+      : 'Processing completed successfully';
+    
+    return (
+      <div key={message.id} className="flex justify-start mb-4">
+        <div className="max-w-[95%] w-full">
+          {/* Completion message header for generated SQL */}
+          {isGeneratedSQL && (
+            <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg p-3 mb-3`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                <span className={`${colors.text} text-sm font-medium`}>
+                  🎉 {completionText}
+                </span>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-gray-400">
+                {modelUsed && (
+                  <span>Model: <span className="text-blue-400">{String(modelUsed)}</span></span>
+                )}
+                {processingStrategy && (
+                  <span>Strategy: <span className="text-green-400">{String(processingStrategy).replace('_', ' ')}</span></span>
+                )}
+              </div>
             </div>
-            <button 
-              onClick={() => {
-                navigator.clipboard.writeText(message.content);
-                showToast('Code copied to clipboard!', 'success');
-              }}
-              className={`${colors.textSecondary} hover:${colors.text} text-xs px-2 py-1 rounded transition-colors`}
-            >
-              Copy
-            </button>
+          )}
+          
+          {/* SQL Code Block */}
+          <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg overflow-hidden`}>
+            <div className={`flex items-center justify-between px-4 py-2 ${colors.secondary} border-b ${colors.borderLight}`}>
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${colors.successBg}`}></span>
+                <span className={`${colors.text} text-xs font-mono`}>
+                  {blockType?.replace('_', ' ').toUpperCase() || 'SQL'} 
+                </span>
+              </div>
+              <button 
+                onClick={() => {
+                  navigator.clipboard.writeText(message.content);
+                  showToast('SQL copied to clipboard!', 'success');
+                }}
+                className={`${colors.textSecondary} hover:${colors.text} text-xs px-2 py-1 rounded transition-colors`}
+              >
+                Copy SQL
+              </button>
+            </div>
+            <pre className={`p-4 text-sm font-mono overflow-x-auto leading-relaxed ${colors.text}`}>
+              <code>{typeof message.content === 'string' ? message.content : JSON.stringify(message.content, null, 2)}</code>
+            </pre>
           </div>
-          <pre className={`p-4 text-sm font-mono overflow-x-auto leading-relaxed ${colors.text}`}>
-            <code>{message.content}</code>
-          </pre>
-        </div>
-        <div className={`text-xs ${colors.textMuted} mt-1`}>
-          Generated • {new Date(message.timestamp).toLocaleTimeString()}
+          <div className={`text-xs ${colors.textMuted} mt-1`}>
+            {isGeneratedSQL ? 'Generated' : 'Code'} • {new Date(message.timestamp).toLocaleTimeString()}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderMessage = (message) => {
     switch (message.type) {
