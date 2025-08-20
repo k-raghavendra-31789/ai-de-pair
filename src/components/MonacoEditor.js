@@ -87,7 +87,7 @@ const MonacoEditor = ({
       monaco.languages.setLanguageConfiguration('sql', {
         keywords: [
           'SELECT', 'FROM', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'OUTER', 
-          'ON', 'AS', 'AND', 'OR', 'NOT', 'NULL', 'IS', 'LIKE', 'IN', 'BETWEEN', 
+          'ON', 'AS', 'AND', 'OR', 'NOT', 'NULL', 'IS', 'LIKE', 'IN', 'BETWEEN', 'WITH',
           'ORDER', 'BY', 'GROUP', 'HAVING', 'DISTINCT', 'UNION', 'ALL', 'INTERSECT', 
           'EXCEPT', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'IF', 'EXISTS', 'ANY', 'SOME',
           'CAST', 'CONCAT', 'COALESCE', 'ISNULL', 'NULLIF', 'COUNT', 'SUM', 'AVG', 
@@ -95,7 +95,7 @@ const MonacoEditor = ({
           'LTRIM', 'RTRIM', 'REPLACE', 'CHARINDEX', 'DATEPART', 'DATEDIFF', 'GETDATE', 
           'CONVERT', 'TRY_CAST', 'TRY_CONVERT', 'ROW_NUMBER', 'RANK', 'DENSE_RANK', 
           'OVER', 'PARTITION', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP',
-          'STRING','CURRENT_TIMESTAMP',
+          'STRING','CURRENT_TIMESTAMP','LIMIT',
         ]
       });
 
@@ -104,7 +104,7 @@ const MonacoEditor = ({
         ignoreCase: true,
         keywords: [
           'SELECT', 'FROM', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'OUTER', 
-          'ON', 'AS', 'AND', 'OR', 'NOT', 'NULL', 'IS', 'LIKE', 'IN', 'BETWEEN', 
+          'ON', 'AS', 'AND', 'OR', 'NOT', 'NULL', 'IS', 'LIKE', 'IN', 'BETWEEN', 'WITH',
           'ORDER', 'BY', 'GROUP', 'HAVING', 'DISTINCT', 'UNION', 'ALL', 'INTERSECT', 
           'EXCEPT', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'IF', 'EXISTS', 'ANY', 'SOME',
           'CAST', 'CONCAT', 'COALESCE', 'ISNULL', 'NULLIF', 'COUNT', 'SUM', 'AVG', 
@@ -115,7 +115,7 @@ const MonacoEditor = ({
           'INT', 'INTEGER', 'BIGINT', 'SMALLINT', 'TINYINT', 'DECIMAL', 'NUMERIC', 
           'FLOAT', 'REAL', 'VARCHAR', 'CHAR', 'NVARCHAR', 'NCHAR', 'TEXT', 'NTEXT', 
           'DATE', 'TIME', 'DATETIME', 'DATETIME2', 'TIMESTAMP', 'BIT', 'BINARY', 
-          'VARBINARY', 'UNIQUEIDENTIFIER','STRING','CURRENT_TIMESTAMP'
+          'VARBINARY', 'UNIQUEIDENTIFIER','STRING','CURRENT_TIMESTAMP','LIMIT'
         ],
         tokenizer: {
           root: [

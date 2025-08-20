@@ -417,23 +417,40 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
   // SQL Execution Function - Use centralized AppState action
   const executeSqlQuery = useCallback(async (query, selectedText = null) => {
+    console.log('🚀 MainEditor executeSqlQuery called:', {
+      query: query?.substring(0, 100) + '...',
+      selectedText: selectedText?.substring(0, 100),
+      activeConnectionId,
+      activeTabName: activeTab?.name,
+      queryLength: query?.length
+    });
+
     if (!activeConnectionId) {
       console.warn('No active connection selected');
+      alert('No database connection selected. Please configure a connection first.');
       return;
     }
 
     const sqlToExecute = selectedText || query;
     if (!sqlToExecute?.trim()) {
       console.warn('No SQL content to execute');
+      alert('No SQL content to execute. Please write some SQL first.');
       return;
     }
 
     // Get the current file name as source identifier
     const sourceFile = activeTab?.name || null;
     console.log('MainEditor: Executing SQL for source file:', sourceFile);
+    console.log('SQL to execute:', sqlToExecute);
 
     // Use centralized SQL execution from AppState with source file info
-    await executeFromAppState(sqlToExecute, activeConnectionId, sourceFile);
+    try {
+      await executeFromAppState(sqlToExecute, activeConnectionId, sourceFile);
+      console.log('✅ SQL execution completed');
+    } catch (error) {
+      console.error('❌ SQL execution failed:', error);
+      alert(`SQL execution failed: ${error.message}`);
+    }
   }, [activeConnectionId, executeFromAppState, activeTab?.name]);
 
   // Handle keyboard shortcuts for saving
@@ -645,11 +662,21 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         event.key === 'Enter'
       ) {
         event.preventDefault();
-        executeSqlQuery(
-          activeTab?.type === 'memory' 
-            ? getCurrentMemoryFileContent(activeTab?.id) 
-            : (fileContents[activeTab?.id] || '')
-        );
+        
+        let sqlContent;
+        if (activeTab?.type === 'memory') {
+          sqlContent = getCurrentMemoryFileContent(activeTab?.fileId);
+        } else {
+          sqlContent = fileContents[activeTab?.name] || '';
+        }
+        
+        console.log('⌨️ Ctrl+Enter SQL execution:', {
+          tabType: activeTab?.type,
+          fileId: activeTab?.fileId,
+          contentLength: sqlContent?.length
+        });
+        
+        executeSqlQuery(sqlContent);
       }
     };
 
@@ -660,7 +687,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [activeTab?.name, activeTab?.id, activeTab?.type, fileContents, getCurrentMemoryFileContent, executeSqlQuery]);
+  }, [activeTab?.name, activeTab?.id, activeTab?.fileId, activeTab?.type, fileContents, getCurrentMemoryFileContent, executeSqlQuery]);
 
   const openFileInTab = (fileName) => {
     // For simple filename-only cases, use filename as both identifier and name
@@ -1139,11 +1166,21 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
             {/* Run SQL Button - Show for SQL files */}
             {activeTab?.name.toLowerCase().endsWith('.sql') && (
               <button
-                onClick={() => executeSqlQuery(
-                  activeTab?.type === 'memory' 
-                    ? getCurrentMemoryFileContent(activeTab?.id) 
-                    : (fileContents[activeTab?.id] || '')
-                )}
+                onClick={() => {
+                  let sqlContent;
+                  if (activeTab?.type === 'memory') {
+                    sqlContent = getCurrentMemoryFileContent(activeTab?.fileId);
+                  } else {
+                    sqlContent = fileContents[activeTab?.name] || '';
+                  }
+                  console.log('🚀 Running SQL from MainEditor:', {
+                    tabType: activeTab?.type,
+                    fileId: activeTab?.fileId,
+                    contentLength: sqlContent?.length,
+                    contentPreview: sqlContent?.substring(0, 100)
+                  });
+                  executeSqlQuery(sqlContent);
+                }}
                 disabled={sqlExecution.isExecuting || !activeConnectionId}
                 className={`px-3 py-1 text-xs rounded flex items-center gap-1 transition-colors ${
                   sqlExecution.isExecuting || !activeConnectionId
