@@ -1951,17 +1951,15 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
                     <div
                       className="flex items-center flex-1"
                       onClick={() => {
-                        // Open memory file in tab
-                        const tabId = `memory_${fileId}`;
+                        // Open memory file in tab with correct structure
+                        const tabId = `tab-memory-${fileId}-${Date.now()}`;
                         addTab({
                           id: tabId,
                           name: file.name,
-                          type: 'file',
+                          type: 'memory',  // ✅ Correct type for memory files
                           isActive: true,
                           isDirty: false,
-                          isMemoryFile: true,
-                          fileId: fileId,
-                          content: file.content
+                          fileId: fileId  // ✅ Reference to memory file for content loading
                         });
                       }}
                     >

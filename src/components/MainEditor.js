@@ -75,7 +75,8 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     if (!memoryFile || !memoryFile.versions || memoryFile.versions.length === 0) {
       return '';
     }
-    const currentIndex = memoryFile.currentVersionIndex || 0;
+    const currentIndex = memoryFile.currentVersionIndex;
+    if (currentIndex < 0) return ''; // No versions yet
     return memoryFile.versions[currentIndex]?.content || '';
   }, [memoryFiles]);
 
@@ -328,8 +329,8 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
       if (isMemoryFile) {
         console.log('💾 Saving memory file:', currentTab.fileId, 'with content length:', content?.length);
-        // For memory files, update the memory content
-        updateMemoryFile(currentTab.fileId, content);
+        // For memory files, update the memory content (create version for manual save)
+        updateMemoryFile(currentTab.fileId, content, true, '💾 Manual save (Ctrl+S)');
         console.log('✅ Memory file updated');
         
         // Mark tab as clean
@@ -565,7 +566,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         // Only proceed if memory file doesn't exist OR tab is not yet marked as memory file
         if (!existingMemoryFile || (currentTab && currentTab.type !== 'memory')) {
           if (existingMemoryFile) {
-            updateMemoryFile(memoryFileId, sqlGeneration.sqlContent);
+            updateMemoryFile(memoryFileId, sqlGeneration.sqlContent, true, '🔄 SQL generation update'); // Create version for SQL generation update
           } else {
             // Add new memory file with consistent ID
             addMemoryFile(memoryFileId, fileName, sqlGeneration.sqlContent, 'sql', false);
@@ -634,13 +635,19 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   // Load memory file content when memory file tab becomes active
   useEffect(() => {
     if (activeTab?.type === 'memory' && activeTab?.fileId) {
+      console.log('🔍 Loading memory file content for tab:', activeTab.name, 'fileId:', activeTab.fileId);
       const memoryFile = memoryFiles[activeTab.fileId];
+      console.log('📁 Memory file found:', !!memoryFile, memoryFile ? 'versions:' + memoryFile.versions?.length : 'no file');
+      
       if (memoryFile && memoryFile.versions && memoryFile.versions.length > 0) {
         const currentMemoryContent = getCurrentMemoryFileContent(activeTab.fileId);
+        console.log('📄 Memory file content length:', currentMemoryContent?.length);
+        
         // Only update if content is different to prevent infinite loops
         setFileContents(prev => {
           const currentContent = prev[activeTab.id];
           if (currentContent !== currentMemoryContent) {
+            console.log('✅ Updating fileContents for memory file:', activeTab.name);
             return {
               ...prev,
               [activeTab.id]: currentMemoryContent
@@ -648,9 +655,11 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
           }
           return prev; // Return same object to prevent unnecessary re-render
         });
+      } else {
+        console.log('⚠️ Memory file not found or has no versions:', activeTab.fileId);
       }
     }
-  }, [activeTab?.id, activeTab?.type, activeTab?.fileId, memoryFiles, getCurrentMemoryFileContent]);
+  }, [activeTab?.id, activeTab?.type, activeTab?.fileId, activeTab?.name, memoryFiles, getCurrentMemoryFileContent]);
 
   // Handle keyboard shortcuts for SQL execution
   useEffect(() => {
@@ -731,30 +740,60 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
   // Function to open GitHub files as memory files for editing
   const openGitHubFileAsMemoryFile = (fileName, content, uniqueId) => {
-    // Generate a unique memory file ID
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substr(2, 9);
-    const memoryFileId = uniqueId ? `memory-${uniqueId}_${timestamp}_${random}` : `memory-${fileName}_${timestamp}_${random}`;
+    // Create a consistent memory file ID based on the GitHub file's unique identifier
+    const memoryFileId = `memory-github-${uniqueId}`;
     
-    // Check if this GitHub file is already open as a memory file
-    const existingTab = openTabs.find(tab => 
-      tab.type === 'memory' && 
-      tab.name === fileName && 
-      tab.id.includes(uniqueId)
-    );
+    // Check if this GitHub file already exists as a memory file (by checking memoryFiles, not just tabs)
+    const existingMemoryFile = memoryFiles[memoryFileId];
     
-    if (existingTab) {
-      // Just activate the existing tab
-      setActiveTabInContext(existingTab.id);
-      return;
+    if (existingMemoryFile) {
+      // Memory file already exists, check if there's an open tab for it
+      const existingTab = openTabs.find(tab => tab.fileId === memoryFileId);
+      
+      if (existingTab) {
+        // Tab is already open, just activate it
+        setActiveTabInContext(existingTab.id);
+        return;
+      } else {
+        // Memory file exists but tab was closed, reopen the tab
+        const tabId = `tab-${memoryFileId}-${Date.now()}`;
+        const newTab = {
+          id: tabId,
+          name: fileName,
+          isActive: true,
+          isDirty: false,
+          type: 'memory',
+          fileId: memoryFileId
+        };
+        
+        // Update tabs
+        const updatedTabs = [
+          ...openTabs.map(tab => ({ ...tab, isActive: false })),
+          newTab
+        ];
+        updateTabs(updatedTabs);
+        
+        // Set initial content in fileContents from existing memory file
+        setFileContents(prev => ({
+          ...prev,
+          [tabId]: getCurrentMemoryFileContent(memoryFileId)
+        }));
+        
+        console.log('🔄 Reopened existing GitHub memory file:', fileName, 'with saved content');
+        return;
+      }
     }
+    
+    // Create new memory file if it doesn't exist
+    console.log('🆕 Creating new GitHub memory file:', fileName);
     
     // Add memory file to context using the correct signature
     addMemoryFile(memoryFileId, fileName, content, 'text', false);
     
     // Create new tab as memory type
+    const tabId = `tab-${memoryFileId}-${Date.now()}`;
     const newTab = {
-      id: memoryFileId,
+      id: tabId,
       name: fileName,
       isActive: true,
       isDirty: false,
@@ -772,7 +811,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     // Set initial content in fileContents for editor display
     setFileContents(prev => ({
       ...prev,
-      [memoryFileId]: content
+      [tabId]: content
     }));
     
     // Notify parent component about file opening
@@ -847,6 +886,19 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
   const closeTab = (tabId) => {
     const tabToClose = openTabs.find(tab => tab.id === tabId);
+    
+    // Before closing, ensure any unsaved changes in fileContents are persisted to memory files
+    if (tabToClose?.type === 'memory' && tabToClose?.fileId) {
+      const currentContent = fileContents[tabId];
+      const memoryFileContent = getCurrentMemoryFileContent(tabToClose.fileId);
+      
+      // If there's a difference between fileContents and memory file, update the memory file
+      if (currentContent && currentContent !== memoryFileContent) {
+        console.log('💾 Persisting unsaved changes before closing tab:', tabToClose.name);
+        updateMemoryFile(tabToClose.fileId, currentContent, true, '🔄 Auto-save on tab close'); // true = create version when saving
+      }
+    }
+    
     const remainingTabs = openTabs.filter(tab => tab.id !== tabId);
     
     // Clean up deleted files state if this tab was for a deleted file
@@ -857,6 +909,13 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         return newDeleted;
       });
     }
+    
+    // Clean up fileContents for this tab
+    setFileContents(prev => {
+      const newContents = { ...prev };
+      delete newContents[tabId];
+      return newContents;
+    });
     
     if (remainingTabs.length === 0) {
       // If no tabs left, just set empty tabs array (Welcome screen will show)
@@ -874,6 +933,19 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   };
 
   const setActiveTab = (tabId) => {
+    // Before switching tabs, ensure any unsaved changes in the current active tab are persisted
+    const currentActiveTab = openTabs.find(tab => tab.isActive);
+    if (currentActiveTab?.type === 'memory' && currentActiveTab?.fileId && currentActiveTab.id !== tabId) {
+      const currentContent = fileContents[currentActiveTab.id];
+      const memoryFileContent = getCurrentMemoryFileContent(currentActiveTab.fileId);
+      
+      // If there's a difference between fileContents and memory file, update the memory file
+      if (currentContent && currentContent !== memoryFileContent) {
+        console.log('💾 Persisting unsaved changes before switching tabs:', currentActiveTab.name);
+        updateMemoryFile(currentActiveTab.fileId, currentContent, true, '🔄 Auto-save on tab switch'); // true = create version when switching
+      }
+    }
+    
     const updatedTabs = openTabs.map(tab => ({
       ...tab,
       isActive: tab.id === tabId
@@ -899,9 +971,9 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     const currentTab = openTabs.find(t => t.id === tabId);
     const isMemoryFile = currentTab?.type === 'memory';
     
-    // For memory files, update the memory file content immediately
+    // For memory files, update the memory file content immediately (WITHOUT creating version for every keystroke)
     if (isMemoryFile && currentTab?.fileId) {
-      updateMemoryFile(currentTab.fileId, newContent);
+      updateMemoryFile(currentTab.fileId, newContent, false, '✏️ Manual edit'); // false = don't create version for every keystroke
     }
     
     // Only auto-save for regular files, not memory files
@@ -1372,7 +1444,8 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
                 <MonacoEditor
                   key={activeTab?.id} // Force re-render when tab changes
                   value={activeTab.type === 'memory' && activeTab.fileId ? 
-                    getCurrentMemoryFileContent(activeTab.fileId) : 
+                    // For memory files, use memory content if available, otherwise fall back to fileContents (for streaming)
+                    getCurrentMemoryFileContent(activeTab.fileId) || fileContents[activeTab?.id] || '' : 
                     (fileContents[activeTab?.id] || '')
                   }
                   onChange={(newValue) => handleContentChange(activeTab?.id, newValue)}

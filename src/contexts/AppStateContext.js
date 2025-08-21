@@ -6,6 +6,9 @@ const ACTION_TYPES = {
   SET_SELECTED_FILE: 'SET_SELECTED_FILE',
   SET_AVAILABLE_FILES: 'SET_AVAILABLE_FILES',
   ADD_MEMORY_FILE: 'ADD_MEMORY_FILE',
+  ADD_MEMORY_FILE_PLACEHOLDER: 'ADD_MEMORY_FILE_PLACEHOLDER', // Create memory file structure without versions
+  START_MEMORY_FILE_STREAMING: 'START_MEMORY_FILE_STREAMING',
+  END_MEMORY_FILE_STREAMING: 'END_MEMORY_FILE_STREAMING',
   UPDATE_MEMORY_FILE: 'UPDATE_MEMORY_FILE',
   REMOVE_MEMORY_FILE: 'REMOVE_MEMORY_FILE',
   SAVE_MEMORY_FILE_TO_DISK: 'SAVE_MEMORY_FILE_TO_DISK',
@@ -95,7 +98,21 @@ const addVersion = (memoryFile, content, description = 'Manual edit') => {
     generationId: Date.now().toString()
   };
   
-  const versions = [newVersion, ...(memoryFile.versions || [])].slice(0, 10);
+  const existingVersions = memoryFile.versions || [];
+  
+  // If there's a streaming version (temporary), replace it instead of adding new
+  if (existingVersions.length === 1 && existingVersions[0].generationId === 'streaming') {
+    return {
+      ...memoryFile,
+      versions: [newVersion],
+      currentVersionIndex: 0,
+      lastModified: new Date()
+    };
+  }
+  
+  // Normal case: add new version
+  const versions = [newVersion, ...existingVersions].slice(0, 10);
+  
   return {
     ...memoryFile,
     versions,
@@ -177,7 +194,8 @@ const createInitialState = () => ({
   // File State
   selectedFile: null,
   availableFiles: [],
-  memoryFiles: {}, // { fileId: { name: string, type: string, isGenerated: boolean, lastModified: Date, versions: Array, currentVersionIndex: number } }
+  memoryFiles: {},
+  streamingMemoryFiles: {}, // Track which memory files are currently streaming // { fileId: { name: string, type: string, isGenerated: boolean, lastModified: Date, versions: Array, currentVersionIndex: number } }
   
   // Folder State
   openFolders: loadFoldersFromStorage(),              // Load from localStorage
@@ -263,6 +281,49 @@ const appStateReducer = (state, action) => {
         availableFiles: action.payload,
       };
     
+    case ACTION_TYPES.START_MEMORY_FILE_STREAMING: {
+      const { fileId } = action.payload;
+      return {
+        ...state,
+        streamingMemoryFiles: {
+          ...state.streamingMemoryFiles,
+          [fileId]: {
+            isStreaming: true,
+            startTime: new Date(),
+            currentContent: ''
+          }
+        }
+      };
+    }
+    
+    case ACTION_TYPES.END_MEMORY_FILE_STREAMING: {
+      const { fileId } = action.payload;
+      const { [fileId]: removed, ...remainingStreaming } = state.streamingMemoryFiles;
+      return {
+        ...state,
+        streamingMemoryFiles: remainingStreaming
+      };
+    }
+    
+    case ACTION_TYPES.ADD_MEMORY_FILE_PLACEHOLDER: {
+      const { fileId, name, type = 'text', isGenerated = false } = action.payload;
+      
+      return {
+        ...state,
+        memoryFiles: {
+          ...state.memoryFiles,
+          [fileId]: {
+            name,
+            type,
+            isGenerated,
+            lastModified: new Date(),
+            versions: [], // No initial version - will be added when streaming completes
+            currentVersionIndex: -1 // No current version yet
+          }
+        }
+      };
+    }
+    
     case ACTION_TYPES.ADD_MEMORY_FILE: {
       const { fileId, name, content, type = 'text', isGenerated = false } = action.payload;
       const initialVersion = {
@@ -289,20 +350,107 @@ const appStateReducer = (state, action) => {
     }
     
     case ACTION_TYPES.UPDATE_MEMORY_FILE: {
-      const { fileId, content, saveVersion = false } = action.payload;
+      const { fileId, content, createVersion = true, description = 'Manual edit' } = action.payload;
       const existingFile = state.memoryFiles[fileId];
       if (!existingFile) return state;
       
-      // Always save a new version (content becomes the new current version)
-      const updatedFile = addVersion(existingFile, content, 'Manual edit');
+      const isStreaming = state.streamingMemoryFiles[fileId]?.isStreaming;
       
-      return {
-        ...state,
-        memoryFiles: {
-          ...state.memoryFiles,
-          [fileId]: updatedFile
+      // Debug logging to track version creation
+      console.log('🔍 UPDATE_MEMORY_FILE:', {
+        fileId,
+        createVersion,
+        isStreaming,
+        description,
+        currentVersionCount: existingFile.versions?.length || 0
+      });
+      
+      if (createVersion && !isStreaming) {
+        // Create a new version (normal case - not during streaming)
+        console.log('📝 Creating new version for:', fileId, 'Description:', description);
+        const updatedFile = addVersion(existingFile, content, description);
+        
+        return {
+          ...state,
+          memoryFiles: {
+            ...state.memoryFiles,
+            [fileId]: updatedFile
+          }
+        };
+      } else {
+        // Update streaming content or current version without creating new version
+        console.log('🔄 Updating without version creation:', fileId, 'Streaming:', isStreaming);
+        let updatedFile = { ...existingFile };
+        
+        if (isStreaming) {
+          // During streaming: update streaming state and current content
+          const updatedStreamingState = {
+            ...state.streamingMemoryFiles,
+            [fileId]: {
+              ...state.streamingMemoryFiles[fileId],
+              currentContent: content
+            }
+          };
+          
+          // If no versions exist yet, create initial streaming version
+          if (!existingFile.versions || existingFile.versions.length === 0) {
+            updatedFile = {
+              ...existingFile,
+              versions: [{
+                content,
+                timestamp: new Date(),
+                description: '🔄 Streaming...',
+                generationId: 'streaming'
+              }],
+              currentVersionIndex: 0,
+              lastModified: new Date()
+            };
+          } else {
+            // Update existing version during streaming
+            const updatedVersions = [...existingFile.versions];
+            updatedVersions[0] = {
+              ...updatedVersions[0],
+              content,
+              timestamp: new Date()
+            };
+            updatedFile = {
+              ...existingFile,
+              versions: updatedVersions,
+              lastModified: new Date()
+            };
+          }
+          
+          return {
+            ...state,
+            memoryFiles: {
+              ...state.memoryFiles,
+              [fileId]: updatedFile
+            },
+            streamingMemoryFiles: updatedStreamingState
+          };
+        } else {
+          // Normal content update without version creation
+          const updatedVersions = [...existingFile.versions];
+          if (updatedVersions.length > 0) {
+            updatedVersions[existingFile.currentVersionIndex || 0] = {
+              ...updatedVersions[existingFile.currentVersionIndex || 0],
+              content: content
+            };
+          }
+          
+          return {
+            ...state,
+            memoryFiles: {
+              ...state.memoryFiles,
+              [fileId]: {
+                ...existingFile,
+                versions: updatedVersions,
+                lastModified: new Date()
+              }
+            }
+          };
         }
-      };
+      }
     }
     
     case ACTION_TYPES.REMOVE_MEMORY_FILE: {
@@ -1065,8 +1213,14 @@ export const AppStateProvider = ({ children }) => {
     // Memory File Actions
     addMemoryFile: (fileId, name, content, type = 'text', isGenerated = false) => 
       dispatch({ type: ACTION_TYPES.ADD_MEMORY_FILE, payload: { fileId, name, content, type, isGenerated } }),
-    updateMemoryFile: (fileId, content) => 
-      dispatch({ type: ACTION_TYPES.UPDATE_MEMORY_FILE, payload: { fileId, content } }),
+    addMemoryFilePlaceholder: (fileId, name, type = 'text', isGenerated = false) => 
+      dispatch({ type: ACTION_TYPES.ADD_MEMORY_FILE_PLACEHOLDER, payload: { fileId, name, type, isGenerated } }),
+    startMemoryFileStreaming: (fileId) => 
+      dispatch({ type: ACTION_TYPES.START_MEMORY_FILE_STREAMING, payload: { fileId } }),
+    endMemoryFileStreaming: (fileId, finalContent = null, description = null) => 
+      dispatch({ type: ACTION_TYPES.END_MEMORY_FILE_STREAMING, payload: { fileId, finalContent, description } }),
+    updateMemoryFile: (fileId, content, createVersion = true, description = 'Manual edit') => 
+      dispatch({ type: ACTION_TYPES.UPDATE_MEMORY_FILE, payload: { fileId, content, createVersion, description } }),
     removeMemoryFile: (fileId) => 
       dispatch({ type: ACTION_TYPES.REMOVE_MEMORY_FILE, payload: fileId }),
     saveMemoryFileToDisk: (fileId) => 

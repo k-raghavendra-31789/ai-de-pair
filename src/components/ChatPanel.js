@@ -20,8 +20,11 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
     addTab,
     setActiveTab,
     addMemoryFile,
+    addMemoryFilePlaceholder,
     updateTabs,
-    updateMemoryFile
+    updateMemoryFile,
+    startMemoryFileStreaming,
+    endMemoryFileStreaming
   } = actions;
   
   // @mention detection state
@@ -412,8 +415,8 @@ ORDER BY total_spent DESC;
           console.log('📝 SQL content length:', extractedSQL.length);
           console.log('📝 SQL content preview:', extractedSQL.substring(0, 100) + '...');
           
-          // Create in-memory file with empty content initially
-          addMemoryFile(memoryFileId, fileName, '', 'sql', false);
+          // Create in-memory file placeholder (no initial version - streaming will create the version)
+          addMemoryFilePlaceholder(memoryFileId, fileName, 'sql', false);
           console.log('✅ Empty memory file created, starting stream...');
           
           // Create new tab for the SQL file
@@ -470,8 +473,8 @@ ORDER BY total_spent DESC;
             const memoryFileId = `sql_chat_${generationId}_${timestamp}`;
             const fileName = `chat-generated-sql-${timestamp}.sql`;
             
-            // Create empty memory file initially
-            addMemoryFile(memoryFileId, fileName, '', 'sql', false);
+            // Create placeholder memory file for streaming
+            addMemoryFilePlaceholder(memoryFileId, fileName, 'sql', false);
             
             const newTab = {
               id: `tab_${timestamp}`,
@@ -704,6 +707,9 @@ ORDER BY total_spent DESC;
   const streamSQLContent = useCallback((memoryFileId, fullSQLContent) => {
     console.log('🚀 Starting SQL content streaming:', memoryFileId);
     
+    // Start streaming state for this file
+    startMemoryFileStreaming(memoryFileId);
+    
     // Split content into manageable chunks (words or lines)
     const lines = fullSQLContent.split('\n');
     let currentContent = '';
@@ -714,8 +720,8 @@ ORDER BY total_spent DESC;
         // Add the next line
         currentContent += (lineIndex > 0 ? '\n' : '') + lines[lineIndex];
         
-        // Update memory file with current content
-        updateMemoryFile(memoryFileId, currentContent);
+        // Update memory file with current content (no version creation during streaming)
+        updateMemoryFile(memoryFileId, currentContent, false);
         
         console.log(`📝 Streamed line ${lineIndex + 1}/${lines.length}:`, lines[lineIndex]);
         
@@ -724,13 +730,15 @@ ORDER BY total_spent DESC;
         // Schedule next line with a slight delay for streaming effect
         setTimeout(streamNextLine, 50); // 50ms delay between lines
       } else {
-        console.log('✅ SQL streaming completed');
+        // Streaming completed - end streaming state and create final version
+        endMemoryFileStreaming(memoryFileId, currentContent, '🤖 Generated SQL from ChatPanel');
+        console.log('✅ SQL streaming completed and final version created');
       }
     };
     
     // Start streaming after a small initial delay
     setTimeout(streamNextLine, 100);
-  }, [updateMemoryFile]);
+  }, [updateMemoryFile, startMemoryFileStreaming, endMemoryFileStreaming]);
 
   // Clean up SSE connection on unmount
   useEffect(() => {
