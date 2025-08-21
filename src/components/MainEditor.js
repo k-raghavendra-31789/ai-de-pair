@@ -729,6 +729,58 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     }
   };
 
+  // Function to open GitHub files as memory files for editing
+  const openGitHubFileAsMemoryFile = (fileName, content, uniqueId) => {
+    // Generate a unique memory file ID
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substr(2, 9);
+    const memoryFileId = uniqueId ? `memory-${uniqueId}_${timestamp}_${random}` : `memory-${fileName}_${timestamp}_${random}`;
+    
+    // Check if this GitHub file is already open as a memory file
+    const existingTab = openTabs.find(tab => 
+      tab.type === 'memory' && 
+      tab.name === fileName && 
+      tab.id.includes(uniqueId)
+    );
+    
+    if (existingTab) {
+      // Just activate the existing tab
+      setActiveTabInContext(existingTab.id);
+      return;
+    }
+    
+    // Add memory file to context using the correct signature
+    addMemoryFile(memoryFileId, fileName, content, 'text', false);
+    
+    // Create new tab as memory type
+    const newTab = {
+      id: memoryFileId,
+      name: fileName,
+      isActive: true,
+      isDirty: false,
+      type: 'memory',
+      fileId: memoryFileId
+    };
+    
+    // Update tabs
+    const updatedTabs = [
+      ...openTabs.map(tab => ({ ...tab, isActive: false })),
+      newTab
+    ];
+    updateTabs(updatedTabs);
+    
+    // Set initial content in fileContents for editor display
+    setFileContents(prev => ({
+      ...prev,
+      [memoryFileId]: content
+    }));
+    
+    // Notify parent component about file opening
+    if (onFileOpen) {
+      onFileOpen(fileName);
+    }
+  };
+
   const openFileInTabWithContent = (fileName, content, fileId = null, uniqueId = null) => {
     // Create a truly unique identifier for the tab
     const timestamp = Date.now();
@@ -847,6 +899,11 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     const currentTab = openTabs.find(t => t.id === tabId);
     const isMemoryFile = currentTab?.type === 'memory';
     
+    // For memory files, update the memory file content immediately
+    if (isMemoryFile && currentTab?.fileId) {
+      updateMemoryFile(currentTab.fileId, newContent);
+    }
+    
     // Only auto-save for regular files, not memory files
     // Memory files will be saved manually via Ctrl+S
     if (!isMemoryFile) {
@@ -915,7 +972,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         const fileData = JSON.parse(data);
         
         if (fileData.isGitHubFile) {
-          // Handle GitHub files
+          // Handle GitHub files - treat them as memory files for editing
           if (fileData.error) {
             openFileInTabWithContent(fileData.name, `// Error loading GitHub file: ${fileData.error}\n// Download URL: ${fileData.downloadUrl}`);
           } else {
@@ -925,7 +982,8 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
             if (isExcelFile(fileData.name)) {
               openFileInTabWithContent(fileData.name, fileData.content, null, uniqueId);
             } else {
-              openFileInTabWithContent(fileData.name, fileData.content, null, uniqueId);
+              // Convert GitHub file to memory file for editing
+              openGitHubFileAsMemoryFile(fileData.name, fileData.content, uniqueId);
             }
           }
         } else if (fileData.isLocalFile && fileData.fileId && fileData.name) {
@@ -1151,13 +1209,13 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
               <button
                 onClick={() => setShowVersionHistory(true)}
                 className={`px-2 py-1 text-xs ${colors.textSecondary} hover:${colors.text} ${colors.border} rounded flex items-center gap-1`}
-                title={`View version history (${memoryFiles[activeTab.id]?.versions?.length || 0} versions) - Debug: ID=${activeTab.id}, Type=${activeTab.type}`}
+                title={`View version history (${memoryFiles[activeTab.fileId]?.versions?.length || 0} versions) - Debug: ID=${activeTab.id}, Type=${activeTab.type}`}
               >
                 <span className="text-xs">📝</span>
                 History
-                {memoryFiles[activeTab.id]?.versions?.length > 0 && (
+                {memoryFiles[activeTab.fileId]?.versions?.length > 0 && (
                   <span className="text-xs bg-blue-600 text-white rounded-full px-1 ml-1">
-                    {memoryFiles[activeTab.id].versions.length}
+                    {memoryFiles[activeTab.fileId].versions.length}
                   </span>
                 )}
               </button>
@@ -1313,7 +1371,10 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
               ) : activeTab ? (
                 <MonacoEditor
                   key={activeTab?.id} // Force re-render when tab changes
-                  value={fileContents[activeTab?.id] || ''}
+                  value={activeTab.type === 'memory' && activeTab.fileId ? 
+                    getCurrentMemoryFileContent(activeTab.fileId) : 
+                    (fileContents[activeTab?.id] || '')
+                  }
                   onChange={(newValue) => handleContentChange(activeTab?.id, newValue)}
                   fileName={activeTab?.name}
                   onSave={(content) => saveFileContent(activeTab?.name, content)}
