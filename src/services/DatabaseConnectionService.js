@@ -58,7 +58,7 @@ class DatabaseConnectionService {
       this.validateConnection(connectionData);
 
       // Test connection by running a simple SQL query
-      const response = await fetch(`${this.baseURL}/api/v1/data/execute-sql-databricks`, {
+      const response = await fetch(`${this.baseURL}/api/v1/sql/execute-databricks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -158,11 +158,11 @@ class DatabaseConnectionService {
         access_token: accessToken
       };
 
-      console.log('🚀 Request URL:', `${this.baseURL}/api/v1/data/execute-sql-databricks`);
+      console.log('🚀 Request URL:', `${this.baseURL}/api/v1/sql/execute-databricks`);
       console.log('🚀 Request body:', requestBody);
       console.log('🚀 Sending request to backend...');
       
-      const response = await fetch(`${this.baseURL}/api/v1/data/execute-sql-databricks`, {
+      const response = await fetch(`${this.baseURL}/api/v1/sql/execute-databricks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
