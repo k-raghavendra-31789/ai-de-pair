@@ -44,6 +44,8 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   // Chat Messages State
   const [chatMessages, setChatMessages] = useState([]);
   const [activeGenerationId, setActiveGenerationId] = useState(null);
+  const [currentSessionId, setCurrentSessionId] = useState(null); // Track active session
+  const [sqlGenerated, setSqlGenerated] = useState(false); // Track if SQL has been generated
   const [sseConnection, setSseConnection] = useState(null);
   const [progressData, setProgressData] = useState(null);
   const [processingStrategy, setProcessingStrategy] = useState(null); // Store strategy selection
@@ -302,6 +304,9 @@ ORDER BY total_spent DESC;
   const startSSEConnection = (sessionId, generationId) => {
     console.log(`🔥 Starting SSE connection for session: ${sessionId}`);
     
+    // Store the session ID for later use
+    setCurrentSessionId(sessionId);
+    
     // Close existing connection if any
     if (sseConnection) {
       sseConnection.close();
@@ -377,6 +382,10 @@ ORDER BY total_spent DESC;
         if (isCompleted && extractedSQL) {
           console.log('🎉 SQL extraction completed:', extractedSQL);
           console.log('🔄 Updating progress to complete and adding SQL result...');
+          
+          // Mark that SQL has been generated successfully
+          setSqlGenerated(true);
+          console.log('✅ SQL generation flag set to true');
           
           // Update progress to completed state first
           setChatMessages(prev => {
@@ -467,6 +476,10 @@ ORDER BY total_spent DESC;
           
           if (possibleSQL) {
             console.log('✨ Found SQL in alternative location:', possibleSQL);
+            
+            // Mark that SQL has been generated successfully
+            setSqlGenerated(true);
+            console.log('✅ SQL generation flag set to true (alternative path)');
             
             // Use the found SQL and create the file with streaming
             const timestamp = Date.now();
@@ -1224,10 +1237,19 @@ ORDER BY total_spent DESC;
     }
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (chatInput.trim() || selectedMentions.length > 0) {
       // Generate unique generation ID
       const generationId = `gen_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Set as active generation ID for follow-up requests
+      setActiveGenerationId(generationId);
+      console.log('🎯 Set active generation ID:', generationId);
+      // If no current session, this is a fresh start - reset SQL generation state
+      if (!currentSessionId) {
+        setSqlGenerated(false);
+        console.log('🔄 Fresh conversation started - reset SQL generation state');
+      }
       
       // Console log file attachment content for debugging
       if (selectedMentions.length > 0) {
@@ -1384,9 +1406,302 @@ ORDER BY total_spent DESC;
       
       setChatMessages(prev => [...prev, userMessage]);
       
+      // Check if SQL has been generated and send to single-pass endpoint
+      if (sqlGenerated && currentSessionId && chatInput.trim()) {
+        console.log('🚀 SQL already generated, sending message to single-pass endpoint...');
+        console.log('📋 Session ID:', currentSessionId);
+        console.log('💬 Message:', chatInput.trim());
+        
+        try {
+          const response = await fetch(`http://localhost:8000/api/v1/data/session/${currentSessionId}/single-pass`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              message: chatInput.trim()
+            })
+          });
+
+          console.log(`📡 Single-pass Response Status: ${response.status} ${response.statusText}`);
+          
+          if (response.ok) {
+            const responseData = await response.json();
+            console.log('✅ Single-pass Response Success:', responseData);
+            
+            // Handle the response (could be updated SQL, questions, etc.)
+            if (responseData.status === 'success') {
+              console.log('✅ Single-pass request processed successfully');
+              
+              // Check if we received updated SQL content
+              if (responseData.message && responseData.mode === 'sql_modification') {
+                console.log('🔄 Received updated SQL from backend:', responseData.message);
+                console.log('📊 Current memory files:', Object.keys(memoryFiles));
+                console.log('📊 Memory files details:', Object.entries(memoryFiles).map(([id, file]) => ({
+                  id, 
+                  name: file.name, 
+                  type: file.type,
+                  hasContent: !!file.content,
+                  isSQL: file.name?.includes('sql')
+                })));
+                console.log('🎯 Current SQL generation ID:', sqlGeneration?.generationId);
+                console.log('🎯 Active generation ID:', activeGenerationId);
+                
+                // Find the SQL memory file to update
+                // First priority: find file related to current SQL generation or active generation
+                let targetFileId = null;
+                let targetFile = null;
+                
+                const effectiveGenerationId = sqlGeneration?.generationId || activeGenerationId;
+                console.log('🎯 Using effective generation ID:', effectiveGenerationId);
+                
+                if (effectiveGenerationId) {
+                  console.log('🔍 Searching for files with generation ID:', effectiveGenerationId);
+                  
+                  // Log all memory files for debugging
+                  Object.entries(memoryFiles).forEach(([fileId, file]) => {
+                    console.log(`📁 File ID: ${fileId}, Name: ${file.name}, Type: ${file.type}, HasSQL: ${file.name?.includes('sql')}`);
+                  });
+                  
+                  // Look for a file with the current generation ID in its name or ID
+                  // Priority 1: Look for the exact pattern used by MainEditor
+                  const exactPattern = `sql_gen_${effectiveGenerationId}`;
+                  console.log('🔍 Looking for exact pattern:', exactPattern);
+                  
+                  const exactGenerationFiles = Object.entries(memoryFiles).filter(([fileId, file]) => 
+                    fileId === exactPattern && file.name && file.name.includes('sql')
+                  );
+                  
+                  if (exactGenerationFiles.length > 0) {
+                    [targetFileId, targetFile] = exactGenerationFiles[0];
+                    console.log('🎯 Found SQL file by exact generation ID pattern:', targetFile.name);
+                  } else {
+                    console.log('⚠️ No exact pattern match found, trying broader search...');
+                    
+                    // Priority 2: Look for files containing the generation ID
+                    const generationBasedFiles = Object.entries(memoryFiles).filter(([fileId, file]) => 
+                      file.name && (
+                        file.name.includes(effectiveGenerationId) ||
+                        fileId.includes(effectiveGenerationId)
+                      ) && file.name.includes('sql') && file.content
+                    );
+                    
+                    if (generationBasedFiles.length > 0) {
+                      [targetFileId, targetFile] = generationBasedFiles[0];
+                      console.log('🎯 Found SQL file by generation ID pattern:', targetFile.name);
+                    } else {
+                      console.log('⚠️ No generation-based files found either');
+                    }
+                  }
+                }
+                
+                // Fallback: find the most recent SQL memory file
+                if (!targetFileId) {
+                  console.log('🔍 Fallback: searching for any SQL memory files...');
+                  
+                  const sqlMemoryFiles = Object.entries(memoryFiles).filter(([fileId, file]) => {
+                    const hasSQL = file.name && file.name.includes('sql');
+                    const hasContent = file.content || (file.versions && file.versions.length > 0);
+                    console.log(`📁 Checking file ${fileId}: name=${file.name}, hasSQL=${hasSQL}, hasContent=${hasContent}, structure:`, {
+                      hasDirectContent: !!file.content,
+                      hasVersions: !!(file.versions && file.versions.length > 0),
+                      versionsCount: file.versions?.length || 0
+                    });
+                    return hasSQL && hasContent;
+                  });
+                  
+                  console.log('📁 Found SQL memory files:', sqlMemoryFiles.map(([id, file]) => ({id, name: file.name})));
+                  
+                  if (sqlMemoryFiles.length > 0) {
+                    // Get the most recent SQL file (assuming they're sorted by creation time)
+                    [targetFileId, targetFile] = sqlMemoryFiles[sqlMemoryFiles.length - 1];
+                    console.log('📝 Using most recent SQL file:', targetFile.name);
+                  }
+                }
+                
+                if (targetFileId && targetFile) {
+                  console.log('📝 Streaming updated SQL to file:', targetFile.name, 'with ID:', targetFileId);
+                  console.log('📄 Old SQL content length:', targetFile.content?.length || 0);
+                  console.log('📄 New SQL content length:', responseData.message.length);
+                  console.log('📊 Memory files before update:', Object.keys(memoryFiles));
+                  
+                  // Start streaming the updated SQL content
+                  startMemoryFileStreaming(targetFileId);
+                  console.log('🌊 Started streaming for SQL update');
+                  
+                  // Simulate streaming by breaking the content into chunks
+                  const content = responseData.message;
+                  const chunkSize = 50; // Characters per chunk
+                  const chunks = [];
+                  
+                  for (let i = 0; i < content.length; i += chunkSize) {
+                    chunks.push(content.substring(0, i + chunkSize));
+                  }
+                  
+                  // Stream each chunk with a delay
+                  let chunkIndex = 0;
+                  const streamInterval = setInterval(() => {
+                    if (chunkIndex < chunks.length) {
+                      updateMemoryFile(targetFileId, chunks[chunkIndex], false, '🔄 Streaming SQL update');
+                      chunkIndex++;
+                    } else {
+                      // Finish streaming
+                      clearInterval(streamInterval);
+                      endMemoryFileStreaming(targetFileId, content, '🔄 AI-generated SQL update');
+                      console.log('✅ SQL update streaming completed');
+                    }
+                  }, 50); // 50ms delay between chunks
+                  
+                  // Add a confirmation message to chat
+                  const confirmationMessage = {
+                    id: `confirm_${Date.now()}`,
+                    type: 'ai',
+                    content: `Updated SQL in ${targetFile.name}`,
+                    timestamp: new Date().toISOString(),
+                    generationId,
+                    metadata: {
+                      mode: responseData.mode,
+                      provider: responseData.provider,
+                      model: responseData.model,
+                      updatedFile: targetFile.name,
+                      sessionId: responseData.session_id
+                    }
+                  };
+                  setChatMessages(prev => [...prev, confirmationMessage]);
+                  
+                  console.log('✅ SQL file updated and confirmation message added');
+                } else {
+                  console.log('⚠️ No SQL memory files found to update - creating new file with streaming');
+                  
+                  // Create a new SQL file with the updated content using streaming
+                  const timestamp = Date.now();
+                  const memoryFileId = `sql_updated_${timestamp}`;
+                  const fileName = `updated-sql-${timestamp}.sql`;
+                  
+                  console.log('📝 Creating new SQL file with streaming:', fileName, 'with ID:', memoryFileId);
+                  
+                  // Create empty memory file and start streaming
+                  addMemoryFile(memoryFileId, fileName, 'sql', '');
+                  startMemoryFileStreaming(memoryFileId);
+                  console.log('🌊 Started streaming for new SQL file');
+                  
+                  // Simulate streaming by breaking the content into chunks
+                  const content = responseData.message;
+                  const chunkSize = 50; // Characters per chunk
+                  const chunks = [];
+                  
+                  for (let i = 0; i < content.length; i += chunkSize) {
+                    chunks.push(content.substring(0, i + chunkSize));
+                  }
+                  
+                  // Stream each chunk with a delay
+                  let chunkIndex = 0;
+                  const streamInterval = setInterval(() => {
+                    if (chunkIndex < chunks.length) {
+                      updateMemoryFile(memoryFileId, chunks[chunkIndex], false, '🔄 Streaming new SQL');
+                      chunkIndex++;
+                    } else {
+                      // Finish streaming
+                      clearInterval(streamInterval);
+                      endMemoryFileStreaming(memoryFileId, content, '🔄 AI-generated SQL update');
+                      console.log('✅ New SQL file streaming completed');
+                    }
+                  }, 50); // 50ms delay between chunks
+                  
+                  // Create new tab for the updated SQL file
+                  const newTab = {
+                    id: `tab_${timestamp}`,
+                    name: fileName,
+                    type: 'memory',
+                    fileId: memoryFileId,
+                    isGenerated: true,
+                    isDirty: false,
+                    metadata: {
+                      source: 'single_pass_update',
+                      generationId,
+                      mode: responseData.mode,
+                      provider: responseData.provider,
+                      model: responseData.model,
+                      sessionId: responseData.session_id
+                    }
+                  };
+                  
+                  updateTabs(tabs => [...tabs, newTab]);
+                  
+                  // Add a message about the new file
+                  const newFileMessage = {
+                    id: `new_file_${Date.now()}`,
+                    type: 'ai',
+                    content: `Created new SQL file: ${fileName}`,
+                    timestamp: new Date().toISOString(),
+                    generationId,
+                    metadata: {
+                      mode: responseData.mode,
+                      provider: responseData.provider,
+                      model: responseData.model,
+                      newFile: fileName,
+                      sessionId: responseData.session_id
+                    }
+                  };
+                  setChatMessages(prev => [...prev, newFileMessage]);
+                  
+                  console.log('✅ New SQL file created with updated content');
+                }
+              } else if (responseData.message) {
+                // If it's not SQL modification, show the message as an AI response
+                const aiMessage = {
+                  id: `ai_${Date.now()}`,
+                  type: 'ai',
+                  content: responseData.message,
+                  timestamp: new Date().toISOString(),
+                  generationId,
+                  metadata: {
+                    mode: responseData.mode,
+                    provider: responseData.provider,
+                    model: responseData.model
+                  }
+                };
+                setChatMessages(prev => [...prev, aiMessage]);
+              }
+            }
+          } else {
+            const errorText = await response.text();
+            console.error('❌ Single-pass Response Error:', errorText);
+            
+            // Show error message in chat
+            const errorMessage = {
+              id: `error_${Date.now()}`,
+              type: 'ai',
+              content: 'Sorry, there was an error processing your request. Please try again.',
+              timestamp: new Date().toISOString(),
+              generationId
+            };
+            setChatMessages(prev => [...prev, errorMessage]);
+          }
+        } catch (error) {
+          console.error('🔥 Network Error sending to single-pass endpoint:', error);
+          
+          // Show network error message in chat
+          const networkErrorMessage = {
+            id: `network_error_${Date.now()}`,
+            type: 'ai',
+            content: 'Network error occurred. Please check your connection and try again.',
+            timestamp: new Date().toISOString(),
+            generationId
+          };
+          setChatMessages(prev => [...prev, networkErrorMessage]);
+        }
+      }
+      
       // Clear input and mentions
       setChatInput('');
       setSelectedMentions([]);
+      
+      // Reset textarea height to initial size
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+        textareaRef.current.style.height = '36px'; // Reset to minimum height
+      }
     }
   };
 
@@ -2090,7 +2405,12 @@ ORDER BY total_spent DESC;
         <h3 className={`text-sm font-medium ${colors.text}`}>CHAT</h3>
         {chatMessages.length > 0 && (
           <button
-            onClick={() => setChatMessages([])}
+            onClick={() => {
+              setChatMessages([]);
+              setCurrentSessionId(null);
+              setSqlGenerated(false);
+              console.log('🧹 Chat cleared - reset session and SQL generation state');
+            }}
             className={`text-xs ${colors.textSecondary} hover:${colors.text} px-2 py-1 rounded transition-colors`}
             title="Clear chat history"
           >
