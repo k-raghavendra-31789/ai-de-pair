@@ -21,7 +21,8 @@ import {
   FaDatabase,
   FaHtml5,
   FaCss3Alt,
-  FaMarkdown
+  FaMarkdown,
+  FaCodeBranch
 } from 'react-icons/fa';
 import { 
   SiJavascript, 
@@ -62,6 +63,12 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
   const [fetchMode, setFetchMode] = useState('repository'); // 'repository' or 'single-file'
   const [gitHubRepos, setGitHubRepos] = useState([]);
   const [isLoadingGitHub, setIsLoadingGitHub] = useState(false);
+  
+  // Git commit state
+  const [showGitCommitDialog, setShowGitCommitDialog] = useState(false);
+  const [commitMessage, setCommitMessage] = useState('');
+  const [selectedFileForCommit, setSelectedFileForCommit] = useState(null);
+  const [isCommitting, setIsCommitting] = useState(false);
   
   // Cloud storage integration state
   const [cloudConnections, setCloudConnections] = useState([]);
@@ -145,6 +152,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       showRenameDialog,
       showDeleteDialog,
       showGitHubDialog,
+      showGitCommitDialog,
       showCloudDialog,
       showCloudConnectDialog,
       openFolders,
@@ -179,6 +187,9 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
           setGitHubFilePath('');
           setGitHubBranch('main');
           setFetchMode('repository');
+        }
+        if (stateRefs.current.showGitCommitDialog) {
+          closeGitCommitDialog();
         }
         if (stateRefs.current.showCloudDialog) {
           setShowCloudDialog(false);
@@ -1253,6 +1264,63 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
     setContextMenu({ show: false, x: 0, y: 0, item: null });
   };
 
+  // Git commit functions
+  const handleGitCommit = async (file) => {
+    setSelectedFileForCommit(file);
+    setShowGitCommitDialog(true);
+  };
+
+  const performGitCommit = async () => {
+    if (!commitMessage.trim() || !selectedFileForCommit) {
+      showToast('Please enter a commit message', 'error');
+      return;
+    }
+
+    setIsCommitting(true);
+    try {
+      const fileName = selectedFileForCommit.name;
+      const isMemoryFile = selectedFileForCommit.isMemoryFile;
+      const fileHandle = selectedFileForCommit.handle;
+      
+      if (isMemoryFile) {
+        // Handle memory files - they need to be saved to disk first
+        showToast(
+          `Memory file "${fileName}" needs to be saved to disk first.\n\nTo commit this memory file:\n1. Save file to disk (Ctrl+S in editor)\n2. Navigate to the saved file's directory\n3. Run: git add "${fileName}"\n4. Run: git commit -m "${commitMessage}"\n5. Run: git push`,
+          'info',
+          10000
+        );
+      } else if (fileHandle) {
+        // Handle regular files with file handles
+        showToast(
+          `To commit "${fileName}":\n1. Open terminal in the file's directory\n2. Run: git add "${fileName}"\n3. Run: git commit -m "${commitMessage}"\n4. Run: git push`,
+          'info',
+          8000
+        );
+      } else {
+        // Fallback for files without handles
+        showToast(
+          `To commit "${fileName}":\n1. Navigate to the file's directory in terminal\n2. Run: git add "${fileName}"\n3. Run: git commit -m "${commitMessage}"\n4. Run: git push`,
+          'info',
+          8000
+        );
+      }
+    } catch (error) {
+      console.error('Git commit error:', error);
+      showToast('Failed to prepare commit commands: ' + error.message, 'error');
+    } finally {
+      setIsCommitting(false);
+      setShowGitCommitDialog(false);
+      setCommitMessage('');
+      setSelectedFileForCommit(null);
+    }
+  };
+
+  const closeGitCommitDialog = () => {
+    setShowGitCommitDialog(false);
+    setCommitMessage('');
+    setSelectedFileForCommit(null);
+  };
+
   // Build folder structure with files and immediate subdirectories
   const buildFolderStructure = async (dirHandle) => {
     const folder = {
@@ -1947,6 +2015,13 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
                   <div 
                     key={fileId}
                     className={`flex items-center py-1 px-2 rounded cursor-pointer transition-colors ${colors.hover} group`}
+                    onContextMenu={(e) => handleContextMenu(e, {
+                      type: 'file',
+                      name: file.name,
+                      fileId: fileId,
+                      isMemoryFile: true,
+                      handle: null // Memory files don't have file handles
+                    })}
                   >
                     <div
                       className="flex items-center flex-1"
@@ -2458,25 +2533,47 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
                 >
                   Delete
                 </button>
+                
+                {/* Git Commit option for files */}
+                <button
+                  onClick={() => {
+                    handleGitCommit(contextMenu.item);
+                    closeContextMenu();
+                  }}
+                  className={`w-full text-left px-3 py-1.5 transition-colors flex items-center gap-2`}
+                  style={{ 
+                    fontWeight: '400',
+                    letterSpacing: '0.01em',
+                    color: '#cccccc',
+                    backgroundColor: 'transparent'
+                  }}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = '#37373d'}
+                  onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                >
+                  <FaCodeBranch size={12} />
+                  Git Commit
+                </button>
               </>
             ) : (
-              <button
-                onClick={() => {
-                  selectFolderForNewFile(contextMenu.item);
-                  closeContextMenu();
-                }}
-                className={`w-full text-left px-3 py-1.5 transition-colors`}
-                style={{ 
-                  fontWeight: '400',
-                  letterSpacing: '0.01em',
-                  color: '#cccccc',
-                  backgroundColor: 'transparent'
-                }}
-                onMouseEnter={(e) => e.target.style.backgroundColor = '#37373d'}
-                onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
-              >
-                New File
-              </button>
+              <>
+                <button
+                  onClick={() => {
+                    selectFolderForNewFile(contextMenu.item);
+                    closeContextMenu();
+                  }}
+                  className={`w-full text-left px-3 py-1.5 transition-colors`}
+                  style={{ 
+                    fontWeight: '400',
+                    letterSpacing: '0.01em',
+                    color: '#cccccc',
+                    backgroundColor: 'transparent'
+                  }}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = '#37373d'}
+                  onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                >
+                  New File
+                </button>
+              </>
             )}
           </div>
         </>
@@ -2565,6 +2662,86 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
             </div>
             <div className="ml-3 text-sm font-medium">
               {toast.message}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Git Commit Dialog */}
+      {showGitCommitDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className={`${colors.background} ${colors.border} border rounded-lg p-6 w-96 max-w-md`}>
+            <h3 className={`text-lg font-semibold ${colors.text} mb-4 flex items-center gap-2`}>
+              <FaCodeBranch className="text-blue-400" />
+              Git Commit
+            </h3>
+            
+            <div className="mb-4">
+              <p className={`text-sm ${colors.textSecondary} mb-2`}>
+                Committing {selectedFileForCommit?.isMemoryFile ? 'memory file' : 'file'}: <span className="font-medium">{selectedFileForCommit?.name}</span>
+              </p>
+              
+              <label className={`block text-sm font-medium ${colors.text} mb-2`}>
+                Commit Message
+              </label>
+              <textarea
+                value={commitMessage}
+                onChange={(e) => setCommitMessage(e.target.value)}
+                placeholder="Enter your commit message..."
+                className={`w-full px-3 py-2 border rounded-md resize-none ${colors.background} ${colors.border} ${colors.text}`}
+                style={{
+                  backgroundColor: '#1e1e1e',
+                  borderColor: '#3e3e42',
+                  color: '#cccccc'
+                }}
+                rows={3}
+                disabled={isCommitting}
+              />
+            </div>
+
+            <div className="text-xs text-gray-400 mb-4 p-2 bg-gray-800 rounded">
+              💡 Tip: {selectedFileForCommit?.isMemoryFile 
+                ? 'Memory files need to be saved to disk before committing. This will show you the complete workflow.' 
+                : 'This will show you the git commands to run. For full integration, use your terminal or git client.'}
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={closeGitCommitDialog}
+                disabled={isCommitting}
+                className={`px-4 py-2 rounded-md transition-colors ${colors.textSecondary}`}
+                style={{
+                  backgroundColor: 'transparent',
+                  border: '1px solid #3e3e42',
+                  color: '#cccccc'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={performGitCommit}
+                disabled={isCommitting || !commitMessage.trim()}
+                className={`px-4 py-2 rounded-md transition-colors flex items-center gap-2 ${
+                  !commitMessage.trim() ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+                style={{
+                  backgroundColor: '#0066cc',
+                  color: 'white',
+                  border: 'none'
+                }}
+              >
+                {isCommitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Preparing...
+                  </>
+                ) : (
+                  <>
+                    <FaCodeBranch />
+                    {selectedFileForCommit?.isMemoryFile ? 'Show Save & Commit Steps' : 'Show Git Commands'}
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

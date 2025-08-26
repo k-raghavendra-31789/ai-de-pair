@@ -33,6 +33,7 @@ const MonacoEditor = ({
   language = 'plaintext', 
   fileName = '',
   onSave,
+  onGitCommit, // New prop for Git commit callback
   wordWrap = false
 }) => {
   const { theme } = useTheme();
@@ -136,7 +137,7 @@ const MonacoEditor = ({
             [/"([^"\\]|\\.)*"/, 'string'],
             
             // Numbers
-            [/\d+(\.\d+)?([eE][\-+]?\d+)?/, 'number'],
+            [/\d+(\.\d+)?([eE][+-]?\d+)?/, 'number'],
             
             // Operators and delimiters
             [/[+\-*/=<>!]+/, 'operator'],
@@ -346,6 +347,17 @@ const MonacoEditor = ({
         run: () => formatSQL(editor)
       });
 
+      // Add context menu option for Git commit
+      if (onGitCommit) {
+        editor.addAction({
+          id: 'git-commit',
+          label: 'Git Commit',
+          contextMenuGroupId: 'navigation',
+          contextMenuOrder: 1,
+          run: () => onGitCommit()
+        });
+      }
+
       // Update language when filename changes
       const currentLanguage = getLanguageFromFileName(fileName);
       const model = editor.getModel();
@@ -373,7 +385,7 @@ const MonacoEditor = ({
         resizeObserver.current = null;
       }
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Update word wrap when prop changes
   useEffect(() => {

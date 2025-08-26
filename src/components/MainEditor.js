@@ -5,7 +5,7 @@ import CustomScrollbar from './CustomScrollbar';
 import MonacoEditor from './MonacoEditor';
 import ExcelViewer from './ExcelViewer';
 import VersionHistory from './VersionHistory';
-import { FaDownload } from 'react-icons/fa';
+import { FaDownload, FaCodeBranch } from 'react-icons/fa';
 import { connectionManager } from '../services/ConnectionManager';
 
 const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, ref) => {
@@ -13,24 +13,36 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   const { state, actions } = useAppState();
   
   // Get tab and Excel data from context
-  const { openTabs, excelFiles, sqlGeneration, memoryFiles, activeConnectionId, sqlExecution } = state;
   const { 
-    updateTabs, 
-    setExcelData, 
-    updateExcelFile, 
-    setExcelActiveSheet, 
-    addTab, 
-    setActiveTab: setActiveTabInContext,
-    addMemoryFile,
-    updateMemoryFile,
-    executeSqlQuery: executeFromAppState,
-    saveMemoryFileToDisk,
-    removeMemoryFile,
-    restoreFileVersion,
-    clearFileHistory,
-    setSqlExecuting,
-    setSqlResults
-  } = actions;
+    openTabs = [], 
+    excelFiles = {}, 
+    sqlGeneration = {}, 
+    memoryFiles = {}, 
+    activeConnectionId, 
+    sqlExecution = {} 
+  } = state || {};
+  const { 
+    updateTabs = () => {}, 
+    setExcelData = () => {}, 
+    updateExcelFile = () => {}, 
+    setExcelActiveSheet = () => {}, 
+    addTab = () => {}, 
+    setActiveTab: setActiveTabInContext = () => {},
+    addMemoryFile = () => {},
+    updateMemoryFile = () => {},
+    executeSqlQuery: executeFromAppState = () => {},
+    saveMemoryFileToDisk = () => {},
+    removeMemoryFile = () => {},
+    restoreFileVersion = () => {},
+    clearFileHistory = () => {},
+    setSqlExecuting = () => {},
+    setSqlResults = () => {}
+  } = actions || {};
+  
+  // Helper function to safely access openTabs
+  const safeOpenTabs = useMemo(() => {
+    return Array.isArray(openTabs) ? openTabs : [];
+  }, [openTabs]);
   
   // CSS to hide textarea scrollbars
   // CSS to hide textarea scrollbars
@@ -63,6 +75,19 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   
   // Version history state
   const [showVersionHistory, setShowVersionHistory] = useState(false);
+  
+  // Git commit state
+  const [showGitCommitDialog, setShowGitCommitDialog] = useState(false);
+  const [commitMessage, setCommitMessage] = useState('');
+  const [isCommitting, setIsCommitting] = useState(false);
+  
+  // GitHub PR state
+  const [createPR, setCreatePR] = useState(false);
+  const [prTitle, setPrTitle] = useState('');
+  const [prDescription, setPrDescription] = useState('');
+  const [branchName, setBranchName] = useState('');
+  const [githubToken, setGithubToken] = useState(localStorage.getItem('github_token') || '');
+  const [repoUrl, setRepoUrl] = useState('');
   
   const [dragOver, setDragOver] = useState(false);
   const dragTimeoutRef = useRef(null);
@@ -99,7 +124,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   }, [memoryFiles, getCurrentMemoryFileContent]);
 
   // Get the active tab (moved here to avoid initialization order issues)
-  const activeTab = openTabs.find(tab => tab.isActive);
+  const activeTab = safeOpenTabs.find(tab => tab.isActive);
 
   // Helper function to check if file is Excel
   const isExcelFile = useCallback((fileName) => {
@@ -109,8 +134,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
   // Handle file rename by updating open tabs
   const handleFileRenamed = useCallback((oldName, newName, newHandle) => {
-    
-    const updatedTabs = openTabs.map(tab => {
+    const updatedTabs = safeOpenTabs.map(tab => {
       // Check if this tab corresponds to the renamed file
       if (tab.name === oldName) {
         return {
@@ -143,7 +167,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       const newContents = { ...prevContents };
       Object.keys(newContents).forEach(tabId => {
         // Find the tab with the old name and update the content key if needed
-        const tab = openTabs.find(t => t.id === tabId && t.name === oldName);
+        const tab = safeOpenTabs.find(t => t.id === tabId && t.name === oldName);
         if (tab) {
           // The content stays the same, just the file name reference changes
           // No action needed here as the content is keyed by tabId, not filename
@@ -164,7 +188,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         }
       }
     }
-  }, [openTabs, excelFiles, updateTabs, setExcelData, isExcelFile]);
+  }, [safeOpenTabs, excelFiles, updateTabs, setExcelData, isExcelFile]);
 
   // Check if current tab is a GitHub file
   const isGitHubFile = (tabId) => {
@@ -263,7 +287,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
   // Function to save memory file to disk
   const saveMemoryToDisk = useCallback(async (fileName) => {
-    const currentTab = openTabs.find(tab => tab.name === fileName);
+    const currentTab = safeOpenTabs.find(tab => tab.name === fileName);
     if (!currentTab || currentTab.type !== 'memory') return;
 
     const memoryFile = memoryFiles[currentTab.fileId];
@@ -286,7 +310,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       saveMemoryFileToDisk(currentTab.fileId);
       
       // Update tab to show it's no longer just in memory
-      const updatedTabs = openTabs.map(tab => 
+      const updatedTabs = safeOpenTabs.map(tab => 
         tab.name === fileName ? { 
           ...tab, 
           type: 'file',
@@ -300,7 +324,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         console.error('Error saving memory file to disk:', error);
       }
     }
-  }, [openTabs, memoryFiles, saveMemoryFileToDisk, updateTabs, getCurrentMemoryFileContent]);
+  }, [safeOpenTabs, memoryFiles, saveMemoryFileToDisk, updateTabs, getCurrentMemoryFileContent]);
 
   const saveFileContent = useCallback(async (fileName, content) => {
     try {
@@ -317,7 +341,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       }
 
       // Check tab type
-      const currentTab = openTabs.find(tab => tab.name === fileName);
+      const currentTab = safeOpenTabs.find(tab => tab.name === fileName);
       const isMemoryFile = currentTab?.type === 'memory';
       
       console.log('📋 Tab info:', {
@@ -334,7 +358,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         console.log('✅ Memory file updated');
         
         // Mark tab as clean
-        const updatedTabs = openTabs.map(tab => 
+        const updatedTabs = safeOpenTabs.map(tab => 
           tab.name === fileName ? { ...tab, isDirty: false } : tab
         );
         updateTabs(updatedTabs);
@@ -373,7 +397,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       await writable.close();
 
       // Mark file as clean (not dirty)
-      const cleanTabs = openTabs.map(tab => ({
+      const cleanTabs = safeOpenTabs.map(tab => ({
         ...tab,
         isDirty: tab.name === fileName ? false : tab.isDirty
       }));
@@ -393,7 +417,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
           });
           
           // Update the registry with the new handle
-          const currentTab = openTabs.find(tab => tab.name === fileName);
+          const currentTab = safeOpenTabs.find(tab => tab.name === fileName);
           if (currentTab && currentTab.fileId) {
             window.fileHandleRegistry.set(currentTab.fileId, newFileHandle);
             
@@ -403,7 +427,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
             await writable.close();
             
             // Mark file as clean
-            const cleanTabs = openTabs.map(tab => ({
+            const cleanTabs = safeOpenTabs.map(tab => ({
               ...tab,
               isDirty: tab.name === fileName ? false : tab.isDirty
             }));
@@ -414,7 +438,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         }
       }
     }
-  }, [openTabs, deletedFiles, updateMemoryFile, updateTabs]);
+  }, [safeOpenTabs, deletedFiles, updateMemoryFile, updateTabs]);
 
   // SQL Execution Function - Use centralized AppState action
   const executeSqlQuery = useCallback(async (query, selectedText = null) => {
@@ -483,7 +507,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       // Ctrl+S to save current file
       if (e.ctrlKey && e.key === 's') {
         e.preventDefault();
-        const currentActiveTab = openTabs.find(tab => tab.isActive);
+        const currentActiveTab = safeOpenTabs.find(tab => tab.isActive);
         if (currentActiveTab) {
           // Get content based on tab type
           let content;
@@ -500,7 +524,237 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [openTabs, fileContents, saveFileContent, getCurrentMemoryFileContent]);
+  }, [openTabs, safeOpenTabs, fileContents, saveFileContent, getCurrentMemoryFileContent]);
+
+  // Git Commit Functions
+  const handleGitCommit = useCallback(() => {
+    if (!activeTab) return;
+    
+    // Auto-detect repository URL from current working directory if possible
+    const currentPath = window.location.pathname;
+    if (currentPath && !repoUrl) {
+      // Try to detect repo from common patterns
+      const repoMatch = currentPath.match(/\/([^/]+\/[^/]+)(?:\/|$)/);
+      if (repoMatch) {
+        setRepoUrl(`https://github.com/${repoMatch[1]}`);
+      }
+    }
+    
+    // Auto-populate PR title if not set
+    if (!prTitle) {
+      setPrTitle(`Update ${activeTab.name}`);
+    }
+    
+    // Auto-populate commit message with reasonable default
+    if (!commitMessage) {
+      setCommitMessage(activeTab.type === 'memory' 
+        ? `Add ${activeTab.name}` 
+        : `Update ${activeTab.name}`
+      );
+    }
+    
+    setShowGitCommitDialog(true);
+  }, [activeTab, repoUrl, prTitle, commitMessage]);
+
+  const performGitCommit = useCallback(async () => {
+    if (!activeTab || !commitMessage.trim()) return;
+
+    setIsCommitting(true);
+    
+    try {
+      const fileName = activeTab.name;
+      const isMemoryFile = activeTab.type === 'memory';
+      
+      let instructions = '';
+      
+      if (createPR) {
+        // Enhanced workflow with PR creation
+        const branch = branchName.trim() || `feature/${fileName.replace(/[^a-zA-Z0-9]/g, '-')}-${Date.now()}`;
+        const prTitleText = prTitle.trim() || `Update ${fileName}`;
+        const prDescriptionText = prDescription.trim() || `${commitMessage}\n\nFile: ${fileName}`;
+        
+        if (isMemoryFile) {
+          instructions = `To commit the memory file "${fileName}" and create a Pull Request:
+
+1. First save the file to disk:
+   - Press Ctrl+S (or Cmd+S on Mac) to save
+   - Choose a location in your Git repository
+   - Name the file "${fileName}"
+
+2. Navigate to your repository directory:
+   cd /path/to/your/repository
+
+3. Create and switch to a new branch:
+   git checkout -b ${branch}
+
+4. Add the file to Git:
+   git add "${fileName}"
+
+5. Commit with your message:
+   git commit -m "${commitMessage}"
+
+6. Push the branch to GitHub:
+   git push origin ${branch}
+
+7. Create Pull Request using GitHub CLI (if installed):
+   gh pr create --title "${prTitleText}" --body "${prDescriptionText}"
+
+   Or manually create PR at:
+   https://github.com/YOUR_USERNAME/YOUR_REPO/compare/${branch}
+
+GitHub Token: ${githubToken ? '✓ Configured' : '⚠️ Not set - needed for API operations'}
+Repository: ${repoUrl || 'Not specified'}`;
+        } else {
+          instructions = `To commit "${fileName}" and create a Pull Request:
+
+1. Create and switch to a new branch:
+   git checkout -b ${branch}
+
+2. Add the file to Git:
+   git add "${fileName}"
+
+3. Commit with your message:
+   git commit -m "${commitMessage}"
+
+4. Push the branch to GitHub:
+   git push origin ${branch}
+
+5. Create Pull Request using GitHub CLI:
+   gh pr create --title "${prTitleText}" --body "${prDescriptionText}"
+
+   Or manually create PR at:
+   https://github.com/YOUR_USERNAME/YOUR_REPO/compare/${branch}
+
+Alternative: Direct GitHub API PR creation (requires token):
+${githubToken ? `curl -X POST \\
+  -H "Authorization: token ${githubToken}" \\
+  -H "Accept: application/vnd.github.v3+json" \\
+  https://api.github.com/repos/OWNER/REPO/pulls \\
+  -d '{
+    "title": "${prTitleText}",
+    "body": "${prDescriptionText}",
+    "head": "${branch}",
+    "base": "main"
+  }'` : 'Set GitHub token first to use API method'}
+
+Repository: ${repoUrl || 'Configure repository URL in dialog'}`;
+        }
+      } else {
+        // Original simple commit workflow
+        if (isMemoryFile) {
+          instructions = `To commit the memory file "${fileName}", follow these steps:
+
+1. First save the file to disk:
+   - Press Ctrl+S (or Cmd+S on Mac) to save
+   - Choose a location on your file system
+   - Name the file "${fileName}"
+
+2. Navigate to the directory where you saved the file:
+   cd /path/to/your/saved/file
+
+3. Add the file to Git:
+   git add "${fileName}"
+
+4. Commit with your message:
+   git commit -m "${commitMessage}"
+
+5. Push to remote repository:
+   git push
+
+Note: Memory files exist only in browser memory until saved to disk.`;
+        } else {
+          instructions = `To commit the file "${fileName}", run these commands in your terminal:
+
+1. Add the file to Git:
+   git add "${fileName}"
+
+2. Commit with your message:
+   git commit -m "${commitMessage}"
+
+3. Push to remote repository:
+   git push
+
+Tip: Make sure you're in the correct directory containing "${fileName}"`;
+        }
+      }
+
+      // Show instructions in a modal or alert
+      const proceed = window.confirm(instructions + '\n\nWould you like to copy these commands to clipboard?');
+      
+      if (proceed) {
+        let commandsOnly = '';
+        
+        if (createPR) {
+          const branch = branchName.trim() || `feature/${fileName.replace(/[^a-zA-Z0-9]/g, '-')}-${Date.now()}`;
+          const prTitleText = prTitle.trim() || `Update ${fileName}`;
+          const prDescriptionText = prDescription.trim() || `${commitMessage}\n\nFile: ${fileName}`;
+          
+          commandsOnly = isMemoryFile 
+            ? `# Save file first (Ctrl+S), then:\ngit checkout -b ${branch}\ngit add "${fileName}"\ngit commit -m "${commitMessage}"\ngit push origin ${branch}\ngh pr create --title "${prTitleText}" --body "${prDescriptionText}"`
+            : `git checkout -b ${branch}\ngit add "${fileName}"\ngit commit -m "${commitMessage}"\ngit push origin ${branch}\ngh pr create --title "${prTitleText}" --body "${prDescriptionText}"`;
+        } else {
+          commandsOnly = isMemoryFile 
+            ? `# Save file first (Ctrl+S), then:\ngit add "${fileName}"\ngit commit -m "${commitMessage}"\ngit push`
+            : `git add "${fileName}"\ngit commit -m "${commitMessage}"\ngit push`;
+        }
+        
+        try {
+          await navigator.clipboard.writeText(commandsOnly);
+          alert(`${createPR ? 'Git + PR' : 'Git'} commands copied to clipboard!`);
+        } catch (err) {
+          console.log('Could not copy to clipboard:', err);
+          alert('Commands ready - please copy them manually from the previous dialog.');
+        }
+      }
+      
+      // Save GitHub token to localStorage if provided
+      if (githubToken && githubToken !== localStorage.getItem('github_token')) {
+        localStorage.setItem('github_token', githubToken);
+      }
+      
+      // Close dialog and reset
+      setShowGitCommitDialog(false);
+      setCommitMessage('');
+      setCreatePR(false);
+      setPrTitle('');
+      setPrDescription('');
+      setBranchName('');
+      
+    } catch (error) {
+      console.error('Git commit error:', error);
+      alert('Error generating Git commands. Please try again.');
+    } finally {
+      setIsCommitting(false);
+    }
+  }, [activeTab, commitMessage, createPR, prTitle, prDescription, branchName, githubToken, repoUrl]);
+
+  const closeGitCommitDialog = useCallback(() => {
+    setShowGitCommitDialog(false);
+    setCommitMessage('');
+    setIsCommitting(false);
+    setCreatePR(false);
+    setPrTitle('');
+    setPrDescription('');
+    setBranchName('');
+    // Don't reset GitHub token and repo URL as they should persist
+  }, []);
+
+  // Add Git commit keyboard shortcut
+  useEffect(() => {
+    const handleGitCommitKeyDown = (e) => {
+      // Ctrl+Shift+G for Git commit
+      if (e.ctrlKey && e.shiftKey && e.key === 'G') {
+        e.preventDefault();
+        const currentActiveTab = safeOpenTabs.find(tab => tab.isActive);
+        if (currentActiveTab) {
+          handleGitCommit();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleGitCommitKeyDown);
+    return () => document.removeEventListener('keydown', handleGitCommitKeyDown);
+  }, [openTabs, safeOpenTabs, handleGitCommit]);
 
   // SQL Generation Hooks
   
@@ -508,7 +762,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   useEffect(() => {
     if (sqlGeneration.isActive && sqlGeneration.generationId) {
       const sqlTabId = `sql_${sqlGeneration.generationId}`;
-      const existingSqlTab = openTabs.find(tab => tab.id === sqlTabId);
+      const existingSqlTab = safeOpenTabs.find(tab => tab.id === sqlTabId);
       
       if (!existingSqlTab) {
         const sqlFileName = `generated-sql-${sqlGeneration.generationId}.sql`;
@@ -532,7 +786,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         setActiveTabInContext(sqlTabId);
       }
     }
-  }, [sqlGeneration.isActive, sqlGeneration.generationId, openTabs, addTab, setActiveTabInContext]);
+  }, [sqlGeneration.isActive, sqlGeneration.generationId, openTabs, safeOpenTabs, addTab, setActiveTabInContext]);
 
   // Hook to update SQL content in real-time and auto-save when complete
   useEffect(() => {
@@ -551,30 +805,32 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         return prev; // Return same object to prevent unnecessary re-render
       });
 
-      // Auto-save to memory when generation is complete
-      // NOTE: This is now handled by AppStateContext COMPLETE_SQL_GENERATION action
-      // Commenting out to prevent duplicate file creation
-      /*
-      if (sqlGeneration.currentStage === 'complete') {
+      // Auto-save to memory when generation is complete and sync tab type
+      if (sqlGeneration.currentStage === 'complete' && sqlGeneration.sqlContent) {
         const fileName = `generated-sql-${sqlGeneration.generationId}.sql`;
         const memoryFileId = `sql_gen_${sqlGeneration.generationId}`;
         
         // Check if already in memory - only act if not already processed
         const existingMemoryFile = memoryFiles[memoryFileId];
-        const currentTab = openTabs.find(tab => tab.id === sqlTabId);
+        const currentTab = safeOpenTabs.find(tab => tab.id === sqlTabId);
         
         // Only proceed if memory file doesn't exist OR tab is not yet marked as memory file
         if (!existingMemoryFile || (currentTab && currentTab.type !== 'memory')) {
+          console.log('🔄 Converting SQL tab to memory file:', fileName, 'fileId:', memoryFileId);
+          
           if (existingMemoryFile) {
+            console.log('📝 Updating existing memory file');
             updateMemoryFile(memoryFileId, sqlGeneration.sqlContent, true, '🔄 SQL generation update'); // Create version for SQL generation update
           } else {
+            console.log('📝 Creating new memory file');
             // Add new memory file with consistent ID
             addMemoryFile(memoryFileId, fileName, sqlGeneration.sqlContent, 'sql', false);
           }
 
           // Update tab to reference memory file only if not already a memory file
           if (currentTab && currentTab.type !== 'memory') {
-            const updatedTabs = openTabs.map(tab => 
+            console.log('🔄 Converting tab to memory type with fileId:', memoryFileId);
+            const updatedTabs = safeOpenTabs.map(tab => 
               tab.id === sqlTabId ? { 
                 ...tab, 
                 isGenerated: false,
@@ -584,10 +840,15 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
               } : tab
             );
             updateTabs(updatedTabs);
+            
+            // Also update fileContents to sync with memory file
+            setFileContents(prev => ({
+              ...prev,
+              [sqlTabId]: sqlGeneration.sqlContent
+            }));
           }
         }
       }
-      */
     }
   }, [
     sqlGeneration.sqlContent, 
@@ -595,13 +856,12 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     sqlGeneration.isActive, 
     sqlGeneration.currentStage,
     memoryFiles, 
-    openTabs, 
+    openTabs,
+    safeOpenTabs,
     addMemoryFile, 
-    updateMemoryFile, 
+    updateMemoryFile,
     updateTabs
-  ]);
-
-  // Hook to update tab title based on generation stage
+  ]);  // Hook to update tab title based on generation stage
   useEffect(() => {
     if (sqlGeneration.isActive && sqlGeneration.generationId) {
       const sqlTabId = `sql_${sqlGeneration.generationId}`;
@@ -622,15 +882,15 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         : `${stageIndicator} ${baseFileName}`;
       
       // Update tab name if it's different
-      const currentTab = openTabs.find(tab => tab.id === sqlTabId);
+      const currentTab = safeOpenTabs.find(tab => tab.id === sqlTabId);
       if (currentTab && currentTab.name !== newTabName) {
-        const updatedTabs = openTabs.map(tab => 
+        const updatedTabs = safeOpenTabs.map(tab => 
           tab.id === sqlTabId ? { ...tab, name: newTabName } : tab
         );
         updateTabs(updatedTabs);
       }
     }
-  }, [sqlGeneration.currentStage, sqlGeneration.generationId, sqlGeneration.isActive, openTabs, updateTabs]);
+  }, [sqlGeneration.currentStage, sqlGeneration.generationId, sqlGeneration.isActive, openTabs, safeOpenTabs, updateTabs]);
 
   // Load memory file content when memory file tab becomes active
   useEffect(() => {
@@ -703,7 +963,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     const tabId = fileName;
     
     // Check if file is already open using the identifier
-    const existingTab = openTabs.find(tab => tab.id === tabId);
+    const existingTab = Array.isArray(openTabs) ? openTabs.find(tab => tab.id === tabId) : null;
     if (existingTab) {
       // Just activate the existing tab
       setActiveTab(tabId);
@@ -727,7 +987,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     };
 
     const updatedTabsForFile = [
-      ...openTabs.map(tab => ({ ...tab, isActive: false })),
+      ...safeOpenTabs.map(tab => ({ ...tab, isActive: false })),
       newTab
     ];
     updateTabs(updatedTabsForFile);
@@ -748,7 +1008,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     
     if (existingMemoryFile) {
       // Memory file already exists, check if there's an open tab for it
-      const existingTab = openTabs.find(tab => tab.fileId === memoryFileId);
+      const existingTab = Array.isArray(openTabs) ? openTabs.find(tab => tab.fileId === memoryFileId) : null;
       
       if (existingTab) {
         // Tab is already open, just activate it
@@ -768,7 +1028,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         
         // Update tabs
         const updatedTabs = [
-          ...openTabs.map(tab => ({ ...tab, isActive: false })),
+          ...safeOpenTabs.map(tab => ({ ...tab, isActive: false })),
           newTab
         ];
         updateTabs(updatedTabs);
@@ -803,7 +1063,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     
     // Update tabs
     const updatedTabs = [
-      ...openTabs.map(tab => ({ ...tab, isActive: false })),
+      ...safeOpenTabs.map(tab => ({ ...tab, isActive: false })),
       newTab
     ];
     updateTabs(updatedTabs);
@@ -827,7 +1087,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     const tabId = uniqueId ? `${uniqueId}_${timestamp}_${random}` : `${fileId || fileName}_${timestamp}_${random}`;
     
     // Check if file is already open using the unique identifier
-    const existingTab = openTabs.find(tab => tab.id === tabId);
+    const existingTab = safeOpenTabs.find(tab => tab.id === tabId);
     if (existingTab) {
       // Just activate the existing tab and update content if needed
       setActiveTab(existingTab.id);
@@ -873,7 +1133,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     };
 
     const updatedTabs = [
-      ...openTabs.map(tab => ({ ...tab, isActive: false })),
+      ...safeOpenTabs.map(tab => ({ ...tab, isActive: false })),
       newTab
     ];
     updateTabs(updatedTabs);
@@ -885,7 +1145,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   };
 
   const closeTab = (tabId) => {
-    const tabToClose = openTabs.find(tab => tab.id === tabId);
+    const tabToClose = safeOpenTabs.find(tab => tab.id === tabId);
     
     // Before closing, ensure any unsaved changes in fileContents are persisted to memory files
     if (tabToClose?.type === 'memory' && tabToClose?.fileId) {
@@ -924,7 +1184,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     }
 
     // If we're closing the active tab, activate the last remaining tab
-    const wasActive = openTabs.find(tab => tab.id === tabId)?.isActive;
+    const wasActive = safeOpenTabs.find(tab => tab.id === tabId)?.isActive;
     if (wasActive) {
       remainingTabs[remainingTabs.length - 1].isActive = true;
     }
@@ -934,7 +1194,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
   const setActiveTab = (tabId) => {
     // Before switching tabs, ensure any unsaved changes in the current active tab are persisted
-    const currentActiveTab = openTabs.find(tab => tab.isActive);
+    const currentActiveTab = safeOpenTabs.find(tab => tab.isActive);
     if (currentActiveTab?.type === 'memory' && currentActiveTab?.fileId && currentActiveTab.id !== tabId) {
       const currentContent = fileContents[currentActiveTab.id];
       const memoryFileContent = getCurrentMemoryFileContent(currentActiveTab.fileId);
@@ -946,7 +1206,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       }
     }
     
-    const updatedTabs = openTabs.map(tab => ({
+    const updatedTabs = safeOpenTabs.map(tab => ({
       ...tab,
       isActive: tab.id === tabId
     }));
@@ -961,14 +1221,14 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     }));
 
     // Mark file as dirty
-    const updatedTabs = openTabs.map(tab => ({
+    const updatedTabs = safeOpenTabs.map(tab => ({
       ...tab,
       isDirty: tab.id === tabId ? true : tab.isDirty
     }));
     updateTabs(updatedTabs);
 
     // Get the current tab to check if it's a memory file
-    const currentTab = openTabs.find(t => t.id === tabId);
+    const currentTab = safeOpenTabs.find(t => t.id === tabId);
     const isMemoryFile = currentTab?.type === 'memory';
     
     // For memory files, update the memory file content immediately (WITHOUT creating version for every keystroke)
@@ -1140,7 +1400,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       <div className={`${colors.secondary} ${colors.border} border-b flex items-center relative flex-shrink-0`}>
         {/* Tabs Container */}
         <div className="flex items-center flex-1 overflow-x-auto">
-          {openTabs.map((tab) => {
+          {safeOpenTabs.map((tab) => {
             const isDeleted = deletedFiles.has(tab.name);
             return (
             <div
@@ -1402,19 +1662,36 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
           <div className="flex-1 flex flex-col overflow-hidden">
             {/* File Header */}
             <div className={`${colors.secondary} px-4 py-2 border-b ${colors.borderLight} flex items-center justify-between flex-shrink-0`}>
-              {/* Status indicator */}
+              {/* Left side - Status indicator and file name */}
               <span className="flex items-center gap-2 text-sm">
                 <span className={`w-2 h-2 ${colors.successBg} rounded-full`}></span>
                 <span className={colors.text}>{activeTab?.name}</span>
               </span>
-              {activeTab?.isDirty && (
-                <span className={`${colors.warning} text-xs flex items-center gap-1`}>
-                  ● Unsaved changes
-                  {activeTab?.type === 'memory' && (
-                    <span className={`${colors.textMuted} text-xs`}>(Press Ctrl+S to save)</span>
-                  )}
-                </span>
-              )}
+              
+              {/* Right side - Actions and status */}
+              <div className="flex items-center gap-3">
+                {/* Git Commit Button */}
+                {activeTab && (
+                  <button
+                    onClick={handleGitCommit}
+                    className={`flex items-center gap-1 px-2 py-1 text-xs ${colors.textMuted} hover:${colors.text} hover:${colors.accentBg} hover:bg-opacity-20 rounded transition-colors`}
+                    title={`Git commit ${activeTab.type === 'memory' ? 'memory file' : 'file'}: ${activeTab.name}`}
+                  >
+                    <FaCodeBranch size={12} />
+                    <span>Commit</span>
+                  </button>
+                )}
+                
+                {/* Unsaved changes indicator */}
+                {activeTab?.isDirty && (
+                  <span className={`${colors.warning} text-xs flex items-center gap-1`}>
+                    ● Unsaved changes
+                    {activeTab?.type === 'memory' && (
+                      <span className={`${colors.textMuted} text-xs`}>(Press Ctrl+S to save)</span>
+                    )}
+                  </span>
+                )}
+              </div>
             </div>
             
             {/* Deleted File Warning */}
@@ -1451,6 +1728,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
                   onChange={(newValue) => handleContentChange(activeTab?.id, newValue)}
                   fileName={activeTab?.name}
                   onSave={(content) => saveFileContent(activeTab?.name, content)}
+                  onGitCommit={handleGitCommit}
                   wordWrap={wordWrap}
                 />
               ) : null}
@@ -1477,6 +1755,187 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
           onClearHistory={clearFileHistory}
           onClose={() => setShowVersionHistory(false)}
         />
+      )}
+
+      {/* Git Commit Dialog */}
+      {showGitCommitDialog && activeTab && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className={`${colors.secondary} rounded-lg border ${colors.borderLight} w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto`}>
+            {/* Dialog Header */}
+            <div className={`px-6 py-4 border-b ${colors.borderLight}`}>
+              <h3 className={`text-lg font-semibold ${colors.text} flex items-center gap-2`}>
+                <FaCodeBranch />
+                Git Commit {createPR ? '+ Pull Request' : ''} {activeTab.type === 'memory' ? 'Memory File' : 'File'}
+              </h3>
+              <p className={`text-sm ${colors.textMuted} mt-1`}>
+                {activeTab.type === 'memory' 
+                  ? `Prepare to commit memory file: ${activeTab.name}`
+                  : `Commit file: ${activeTab.name}`
+                }
+                {createPR && ' and create a Pull Request'}
+              </p>
+            </div>
+
+            {/* Dialog Content */}
+            <div className="px-6 py-4 space-y-4">
+              {/* Commit Message */}
+              <div>
+                <label className={`block text-sm font-medium ${colors.text} mb-2`}>
+                  Commit Message *
+                </label>
+                <textarea
+                  value={commitMessage}
+                  onChange={(e) => setCommitMessage(e.target.value)}
+                  placeholder={`${activeTab.type === 'memory' ? 'Add memory file' : 'Update'} ${activeTab.name}`}
+                  className={`w-full px-3 py-2 ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text} resize-none`}
+                  rows={3}
+                  autoFocus
+                />
+              </div>
+
+              {/* Create PR Toggle */}
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="createPR"
+                  checked={createPR}
+                  onChange={(e) => setCreatePR(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <label htmlFor="createPR" className={`text-sm font-medium ${colors.text} flex items-center gap-2`}>
+                  <span>🔄 Create Pull Request</span>
+                  <span className={`text-xs ${colors.textMuted}`}>(Advanced Git workflow)</span>
+                </label>
+              </div>
+
+              {/* PR Details Section */}
+              {createPR && (
+                <div className={`border ${colors.borderLight} rounded-lg p-4 space-y-4 bg-opacity-50 ${colors.accentBg}`}>
+                  <h4 className={`text-sm font-semibold ${colors.text} flex items-center gap-2`}>
+                    🚀 Pull Request Details
+                  </h4>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+                        Branch Name
+                      </label>
+                      <input
+                        type="text"
+                        value={branchName}
+                        onChange={(e) => setBranchName(e.target.value)}
+                        placeholder={`feature/${activeTab.name.replace(/[^a-zA-Z0-9]/g, '-')}-update`}
+                        className={`w-full px-3 py-2 text-sm ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text}`}
+                      />
+                    </div>
+                    <div>
+                      <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+                        Repository URL
+                      </label>
+                      <input
+                        type="text"
+                        value={repoUrl}
+                        onChange={(e) => setRepoUrl(e.target.value)}
+                        placeholder="https://github.com/owner/repo"
+                        className={`w-full px-3 py-2 text-sm ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text}`}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+                      PR Title
+                    </label>
+                    <input
+                      type="text"
+                      value={prTitle}
+                      onChange={(e) => setPrTitle(e.target.value)}
+                      placeholder={`Update ${activeTab.name}`}
+                      className={`w-full px-3 py-2 text-sm ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text}`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+                      PR Description
+                    </label>
+                    <textarea
+                      value={prDescription}
+                      onChange={(e) => setPrDescription(e.target.value)}
+                      placeholder={`${commitMessage}\n\nChanges made to ${activeTab.name}`}
+                      className={`w-full px-3 py-2 text-sm ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text} resize-none`}
+                      rows={3}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+                      GitHub Token (Optional - for API operations)
+                    </label>
+                    <input
+                      type="password"
+                      value={githubToken}
+                      onChange={(e) => setGithubToken(e.target.value)}
+                      placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                      className={`w-full px-3 py-2 text-sm ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text}`}
+                    />
+                    <p className={`text-xs ${colors.textMuted} mt-1`}>
+                      💡 Token is saved locally and used for GitHub API operations
+                    </p>
+                  </div>
+                </div>
+              )}
+              
+              {activeTab.type === 'memory' && (
+                <div className={`p-3 ${colors.accentBg} bg-opacity-20 rounded-md`}>
+                  <p className={`text-xs ${colors.textMuted}`}>
+                    💡 <strong>Tip:</strong> Memory files need to be saved to disk before committing. 
+                    You&apos;ll get instructions on how to save and commit this file{createPR ? ' and create the PR' : ''}.
+                  </p>
+                </div>
+              )}
+
+              {createPR && (
+                <div className={`p-3 border-l-4 border-blue-500 ${colors.secondary} bg-opacity-50`}>
+                  <p className={`text-xs ${colors.text}`}>
+                    <strong>🔄 PR Workflow:</strong> This will create a new branch, commit your changes, push to GitHub, and provide instructions for creating a Pull Request.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Dialog Actions */}
+            <div className={`px-6 py-4 border-t ${colors.borderLight} flex justify-end gap-3`}>
+              <button
+                onClick={closeGitCommitDialog}
+                className={`px-4 py-2 text-sm ${colors.textMuted} hover:${colors.text} transition-colors`}
+                disabled={isCommitting}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={performGitCommit}
+                disabled={!commitMessage.trim() || isCommitting}
+                className={`px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2`}
+              >
+                {isCommitting ? (
+                  <>
+                    <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <FaCodeBranch size={12} />
+                    {createPR 
+                      ? (activeTab.type === 'memory' ? 'Show Save, Commit & PR Steps' : 'Show Git + PR Commands')
+                      : (activeTab.type === 'memory' ? 'Show Save & Commit Steps' : 'Show Git Commands')
+                    }
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
