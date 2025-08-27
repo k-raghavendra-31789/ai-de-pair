@@ -1793,7 +1793,7 @@ ORDER BY total_spent DESC;
   const renderUserMessage = (message) => (
     <div key={message.id} className="flex justify-end mb-4">
       <div className="max-w-[80%]">
-        <div className={`${colors.accent} text-white border ${colors.borderLight} rounded-lg px-4 py-2`}>
+        <div className={`${colors.chatUserBg} ${colors.text} border ${colors.borderLight} rounded-lg px-4 py-2`}>
           <div className="text-sm">{typeof message.content === 'string' ? message.content : 'Message'}</div>
           {message.attachments && message.attachments.length > 0 && (
             <div className="mt-2 pt-2 border-t border-white border-opacity-20">
@@ -1821,7 +1821,7 @@ ORDER BY total_spent DESC;
   const renderAiMessage = (message) => (
     <div key={message.id} className="flex justify-start mb-4">
       <div className="max-w-[80%]">
-        <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg px-4 py-2`}>
+        <div className={`${colors.chatAiBg} border ${colors.borderLight} rounded-lg px-4 py-2`}>
           <div className={`text-sm ${colors.text}`}>{typeof message.content === 'string' ? message.content : 'AI Response'}</div>
         </div>
         <div className={`text-xs ${colors.textMuted} mt-1`}>
@@ -1933,12 +1933,12 @@ ORDER BY total_spent DESC;
 
     return (
       <div key={message.id} className="flex justify-start mb-3">
-        <div className="max-w-[90%] w-full border border-gray-600 rounded-lg p-3 bg-gray-800/50">
+        <div className={`max-w-[90%] w-full border ${colors.borderLight} rounded-lg p-3 ${colors.secondary}`}>
           {/* Progress indicator with stages */}
           <div className="mb-3">
             <div className="relative flex items-center justify-between mb-2 px-2 sm:px-4" style={{ height: '70px' }}>
               {/* Background connection line */}
-              <div className="absolute top-1/2 left-4 right-4 sm:left-6 sm:right-6 h-0.5 bg-gray-600 transform -translate-y-1/2"></div>
+              <div className={`absolute top-1/2 left-4 right-4 sm:left-6 sm:right-6 h-0.5 bg-gray-300 dark:bg-gray-600 transform -translate-y-1/2`}></div>
               
               {stages.map((stage, index) => {
                 const status = getStageStatus(stage.id);
@@ -1948,7 +1948,7 @@ ORDER BY total_spent DESC;
                   <div key={stage.id} className="relative flex flex-col items-center z-10">
                     {/* Label on top for even indices */}
                     {isTop && (
-                      <span className={`text-xs mb-3 text-white font-normal text-center leading-tight ${
+                      <span className={`text-xs mb-3 ${colors.text} font-normal text-center leading-tight ${
                         status === 'active' ? 'opacity-100' : 'opacity-60'
                       }`}>
                         {stage.label}
@@ -1965,14 +1965,14 @@ ORDER BY total_spent DESC;
                         ? 'bg-green-500 text-white border-green-400'
                         : status === 'active'
                         ? 'bg-blue-500 text-white border-blue-400'
-                        : 'bg-gray-500 text-white border-gray-400'
+                        : 'bg-gray-300 text-gray-600 border-gray-400 dark:bg-gray-600 dark:text-gray-300 dark:border-gray-500'
                     }`}>
                       {status === 'complete' ? '✓' : stage.number}
                     </div>
                     
                     {/* Label on bottom for odd indices */}
                     {!isTop && (
-                      <span className={`text-xs mt-3 text-white font-normal text-center leading-tight ${
+                      <span className={`text-xs mt-3 ${colors.text} font-normal text-center leading-tight ${
                         status === 'active' ? 'opacity-100' : 'opacity-60'
                       }`}>
                         {stage.label}
@@ -2007,13 +2007,13 @@ ORDER BY total_spent DESC;
           
           {/* Description Box */}
           <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg px-3 py-2`}>
-            <div className="text-white text-sm leading-relaxed">
+            <div className={`${colors.text} text-sm leading-relaxed`}>
               {typeof message.content === 'string' ? message.content : 'Processing...'}
             </div>
             
             {/* Field Level Progress */}
             {processingStatus && (
-              <div className="text-gray-400 text-xs mt-2">
+              <div className={`${colors.textMuted} text-xs mt-2`}>
                 Fields: {processingStatus.fields_completed}/{processingStatus.total_fields} completed
                 {processingStatus.fields_processing > 0 && ` • ${processingStatus.fields_processing} processing`}
               </div>
@@ -2047,14 +2047,14 @@ ORDER BY total_spent DESC;
                             ? 'bg-blue-600/20 text-blue-400'
                             : column.status === 'error'
                             ? 'bg-red-600/20 text-red-400'
-                            : 'bg-gray-600/20 text-gray-400'
+                            : `${colors.tertiary}/20 ${colors.textMuted}`
                         }`}>
                           {column.status}
                         </span>
                       </div>
                     ))}
                     {columnStats.columns.length > 5 && (
-                      <div className="text-xs text-gray-500 mt-1">
+                      <div className={`text-xs ${colors.textMuted} mt-1`}>
                         ... and {columnStats.columns.length - 5} more columns
                       </div>
                     )}
@@ -2063,7 +2063,7 @@ ORDER BY total_spent DESC;
               </div>
             )}
             
-            <div className="text-gray-400 text-xs mt-1">
+            <div className={`${colors.textMuted} text-xs mt-1`}>
               {progressPercentage}% • {new Date(message.timestamp).toLocaleTimeString()}
             </div>
           </div>
@@ -2270,17 +2270,17 @@ ORDER BY total_spent DESC;
                       <button
                         onClick={() => handleOptionSelect(optionValue)}
                         className={`w-full px-4 py-3 rounded-lg text-left transition-all duration-200
-                          bg-gray-700 text-gray-300 border border-gray-600
-                          hover:bg-gray-600 hover:text-white hover:border-gray-500
+                          ${colors.tertiary} ${colors.text} border ${colors.borderLight}
+                          ${colors.hover} hover:${colors.text} hover:border-${colors.border}
                           focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50
                           cursor-pointer`}
                       >
                         <div className="flex flex-col gap-1">
-                          <div className="text-sm font-medium text-white">
+                          <div className={`text-sm font-medium ${colors.text}`}>
                             {optionLabel}
                           </div>
                           {optionDescription && (
-                            <div className="text-xs text-gray-400 leading-relaxed">
+                            <div className={`text-xs ${colors.textMuted} leading-relaxed`}>
                               {optionDescription}
                             </div>
                           )}
@@ -2579,14 +2579,14 @@ ORDER BY total_spent DESC;
               marginBottom: '0.5rem'
             }}
           >
-            <div className={`p-2 text-xs text-white border-b ${colors.borderLight}`}>
+            <div className={`p-2 text-xs ${colors.text} border-b ${colors.borderLight}`}>
               @{mentionType} suggestions ({mentionSuggestions.length} files):
             </div>
             {mentionSuggestions.length > 0 ? (
               mentionSuggestions.map((suggestion, index) => (
                 <div 
                   key={suggestion.id || index}
-                  className={`p-2 text-sm text-white hover:${colors.hover} cursor-pointer border-b ${colors.borderLight} last:border-b-0`}
+                  className={`p-2 text-sm ${colors.text} hover:${colors.hover} cursor-pointer border-b ${colors.borderLight} last:border-b-0`}
                   onMouseDown={(e) => {
                     e.preventDefault(); // Prevent textarea from losing focus
                     handleMentionSelect(suggestion);
@@ -2599,20 +2599,20 @@ ORDER BY total_spent DESC;
                 >
                   <div className="flex items-center justify-between">
                     <span className="truncate flex-1">{suggestion.name}</span>
-                    <span className={`text-xs text-white ml-2`}>
+                    <span className={`text-xs ${colors.textSecondary} ml-2`}>
                       {suggestion.source === 'github' ? '📁' : 
                        suggestion.source === 'cloud' ? '☁️' : '💻'}
                     </span>
                   </div>
                   {suggestion.path !== suggestion.name && (
-                    <div className={`text-xs text-white truncate mt-1`}>
+                    <div className={`text-xs ${colors.textSecondary} truncate mt-1`}>
                       {suggestion.path}
                     </div>
                   )}
                 </div>
               ))
             ) : (
-              <div className={`p-3 text-sm text-white text-center`}>
+              <div className={`p-3 text-sm ${colors.textMuted} text-center`}>
                 No {mentionType} files found
               </div>
             )}

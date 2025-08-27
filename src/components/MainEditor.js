@@ -5,7 +5,9 @@ import CustomScrollbar from './CustomScrollbar';
 import MonacoEditor from './MonacoEditor';
 import ExcelViewer from './ExcelViewer';
 import VersionHistory from './VersionHistory';
-import { FaDownload, FaCodeBranch } from 'react-icons/fa';
+import { FaDownload, FaCodeBranch, FaPlay, FaGitAlt, FaCog, FaInfoCircle, FaLightbulb, FaTimes, FaCheck } from 'react-icons/fa';
+import { BiGitPullRequest, BiGitBranch, BiGitCommit } from 'react-icons/bi';
+import { VscGithub, VscGitPullRequest } from 'react-icons/vsc';
 import { connectionManager } from '../services/ConnectionManager';
 
 const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, ref) => {
@@ -30,6 +32,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     setActiveTab: setActiveTabInContext = () => {},
     addMemoryFile = () => {},
     updateMemoryFile = () => {},
+    renameMemoryFile = () => {},
     executeSqlQuery: executeFromAppState = () => {},
     saveMemoryFileToDisk = () => {},
     removeMemoryFile = () => {},
@@ -88,11 +91,21 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   const [branchName, setBranchName] = useState('');
   const [githubToken, setGithubToken] = useState(localStorage.getItem('github_token') || '');
   const [repoUrl, setRepoUrl] = useState('');
+  const [availableBranches, setAvailableBranches] = useState([]);
+  const [loadingBranches, setLoadingBranches] = useState(false);
   
   const [dragOver, setDragOver] = useState(false);
   const dragTimeoutRef = useRef(null);
   const dragCounterRef = useRef(0);
   const saveTimeoutRef = useRef({});
+
+  // Tab context menu and renaming state
+  const [showTabContextMenu, setShowTabContextMenu] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
+  const [contextMenuTab, setContextMenuTab] = useState(null);
+  const [showRenameDialog, setShowRenameDialog] = useState(false);
+  const [renamingTab, setRenamingTab] = useState(null);
+  const [newTabName, setNewTabName] = useState('');
 
   // Helper function to get current content from memory file
   const getCurrentMemoryFileContent = useCallback((fileId) => {
@@ -326,6 +339,88 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     }
   }, [safeOpenTabs, memoryFiles, saveMemoryFileToDisk, updateTabs, getCurrentMemoryFileContent]);
 
+  // Tab context menu handlers
+  const handleTabContextMenu = (e, tab) => {
+    e.preventDefault();
+    setContextMenuPosition({ x: e.clientX, y: e.clientY });
+    setContextMenuTab(tab);
+    setShowTabContextMenu(true);
+  };
+
+  const closeContextMenu = () => {
+    setShowTabContextMenu(false);
+    setContextMenuTab(null);
+  };
+
+  const handleTabRename = () => {
+    if (!contextMenuTab) return;
+    setRenamingTab(contextMenuTab);
+    setNewTabName(contextMenuTab.name);
+    setShowRenameDialog(true);
+    closeContextMenu();
+  };
+
+  const confirmTabRename = async () => {
+    if (!renamingTab || !newTabName.trim() || newTabName.trim() === renamingTab.name) {
+      setShowRenameDialog(false);
+      setRenamingTab(null);
+      setNewTabName('');
+      return;
+    }
+
+    const trimmedName = newTabName.trim();
+    
+    try {
+      if (renamingTab.type === 'memory') {
+        // For memory files, only update in memory - no file system operations needed
+        const memoryFile = memoryFiles[renamingTab.fileId];
+        if (memoryFile) {
+          // Update memory file name using the context action
+          renameMemoryFile(renamingTab.fileId, trimmedName);
+          
+          // Update tab name
+          const updatedTabs = safeOpenTabs.map(tab => 
+            tab.id === renamingTab.id ? { ...tab, name: trimmedName } : tab
+          );
+          updateTabs(updatedTabs);
+        }
+      } else {
+        // For regular files, just update the tab name (actual file renaming should be handled in FileExplorer)
+        const updatedTabs = safeOpenTabs.map(tab => 
+          tab.id === renamingTab.id ? { ...tab, name: trimmedName } : tab
+        );
+        updateTabs(updatedTabs);
+      }
+
+      setShowRenameDialog(false);
+      setRenamingTab(null);
+      setNewTabName('');
+    } catch (error) {
+      console.error('Error renaming tab:', error);
+      alert('Error renaming file. Please try again.');
+    }
+  };
+
+  const cancelTabRename = () => {
+    setShowRenameDialog(false);
+    setRenamingTab(null);
+    setNewTabName('');
+  };
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => {
+      if (showTabContextMenu) {
+        closeContextMenu();
+      }
+    };
+
+    if (showTabContextMenu) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [showTabContextMenu]);
+
   const saveFileContent = useCallback(async (fileName, content) => {
     try {
       console.log('💾 saveFileContent called:', {
@@ -556,6 +651,222 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     setShowGitCommitDialog(true);
   }, [activeTab, repoUrl, prTitle, commitMessage]);
 
+  // Helper function to fetch existing branches from repository
+  const fetchRepositoryBranches = useCallback(async (owner, repoName) => {
+    try {
+      const response = await fetch(`https://api.github.com/repos/${owner}/${repoName}/branches`, {
+        headers: {
+          'Authorization': `token ${githubToken}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+
+      if (!response.ok) {
+        console.warn('Could not fetch branches:', response.status);
+        return [];
+      }
+
+      const branches = await response.json();
+      return branches.map(branch => branch.name);
+    } catch (error) {
+      console.warn('Error fetching branches:', error);
+      return [];
+    }
+  }, [githubToken]);
+
+  // Effect to fetch available branches when repo URL changes
+  useEffect(() => {
+    if (githubToken && repoUrl && showGitCommitDialog) {
+      const repoMatch = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+      if (repoMatch) {
+        const [, owner, repo] = repoMatch;
+        const repoName = repo.replace('.git', '');
+        
+        setLoadingBranches(true);
+        fetchRepositoryBranches(owner, repoName)
+          .then(branches => {
+            setAvailableBranches(branches);
+            setLoadingBranches(false);
+          })
+          .catch(error => {
+            console.warn('Failed to fetch branches:', error);
+            setAvailableBranches([]);
+            setLoadingBranches(false);
+          });
+      }
+    }
+  }, [githubToken, repoUrl, showGitCommitDialog, fetchRepositoryBranches]);
+
+  // Helper function to create a new branch from base branch
+  const createGitHubBranch = useCallback(async (owner, repoName, newBranchName, baseBranch = 'main') => {
+    try {
+      // Get the SHA of the base branch
+      const baseResponse = await fetch(`https://api.github.com/repos/${owner}/${repoName}/git/refs/heads/${baseBranch}`, {
+        headers: {
+          'Authorization': `token ${githubToken}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+
+      if (!baseResponse.ok) {
+        throw new Error(`Failed to get base branch ${baseBranch}`);
+      }
+
+      const baseData = await baseResponse.json();
+      const baseSha = baseData.object.sha;
+
+      // Create the new branch
+      const createResponse = await fetch(`https://api.github.com/repos/${owner}/${repoName}/git/refs`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `token ${githubToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ref: `refs/heads/${newBranchName}`,
+          sha: baseSha
+        })
+      });
+
+      if (!createResponse.ok) {
+        const errorData = await createResponse.json();
+        // Branch might already exist, which is fine
+        if (errorData.message && errorData.message.includes('already exists')) {
+          return { success: true, exists: true };
+        }
+        throw new Error(`Failed to create branch: ${errorData.message}`);
+      }
+
+      return { success: true, exists: false };
+    } catch (error) {
+      console.error('Error creating branch:', error);
+      throw error;
+    }
+  }, [githubToken]);
+
+  // GitHub API integration for pushing memory files directly
+  const pushMemoryFileToGitHub = useCallback(async (fileName, content, commitMessage, branch = 'main') => {
+    if (!githubToken || !repoUrl) {
+      throw new Error('GitHub token and repository URL are required');
+    }
+
+    // Extract owner and repo from URL
+    const repoMatch = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+    if (!repoMatch) {
+      throw new Error('Invalid GitHub repository URL format');
+    }
+    
+    const [, owner, repo] = repoMatch;
+    const repoName = repo.replace('.git', '');
+
+    try {
+      // If not pushing to main/master, ensure the branch exists
+      if (branch !== 'main' && branch !== 'master') {
+        await createGitHubBranch(owner, repoName, branch, 'main');
+      }
+      // First, try to get the current file (if it exists) to get its SHA
+      let sha = null;
+      try {
+        const getResponse = await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/${fileName}`, {
+          headers: {
+            'Authorization': `token ${githubToken}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        
+        if (getResponse.ok) {
+          const existingFile = await getResponse.json();
+          sha = existingFile.sha;
+        }
+      } catch (e) {
+        // File doesn't exist yet, which is fine
+      }
+
+      // Create or update the file
+      const createResponse = await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/${fileName}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${githubToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: commitMessage,
+          content: btoa(unescape(encodeURIComponent(content))), // Base64 encode UTF-8 content
+          branch: branch,
+          ...(sha && { sha }) // Include SHA if updating existing file
+        })
+      });
+
+      if (!createResponse.ok) {
+        const errorData = await createResponse.json();
+        throw new Error(`GitHub API error: ${errorData.message || 'Unknown error'}`);
+      }
+
+      const result = await createResponse.json();
+      return {
+        success: true,
+        commit: result.commit,
+        content: result.content,
+        url: result.content.html_url
+      };
+    } catch (error) {
+      console.error('Error pushing to GitHub:', error);
+      throw error;
+    }
+  }, [githubToken, repoUrl, createGitHubBranch]);
+
+  // Create Pull Request via GitHub API
+  const createGitHubPullRequest = useCallback(async (branchName, title, description, baseBranch = 'main') => {
+    if (!githubToken || !repoUrl) {
+      throw new Error('GitHub token and repository URL are required');
+    }
+
+    // Extract owner and repo from URL
+    const repoMatch = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+    if (!repoMatch) {
+      throw new Error('Invalid GitHub repository URL format');
+    }
+    
+    const [, owner, repo] = repoMatch;
+    const repoName = repo.replace('.git', '');
+
+    try {
+      const prResponse = await fetch(`https://api.github.com/repos/${owner}/${repoName}/pulls`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `token ${githubToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: title,
+          body: description,
+          head: branchName,
+          base: baseBranch
+        })
+      });
+
+      if (!prResponse.ok) {
+        const errorData = await prResponse.json();
+        throw new Error(`GitHub PR API error: ${errorData.message || 'Unknown error'}`);
+      }
+
+      const result = await prResponse.json();
+      return {
+        success: true,
+        number: result.number,
+        url: result.html_url,
+        id: result.id
+      };
+    } catch (error) {
+      console.error('Error creating Pull Request:', error);
+      throw error;
+    }
+  }, [githubToken, repoUrl]);
+
+  // Enhanced performGitCommit with direct GitHub API support
   const performGitCommit = useCallback(async () => {
     if (!activeTab || !commitMessage.trim()) return;
 
@@ -564,7 +875,96 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     try {
       const fileName = activeTab.name;
       const isMemoryFile = activeTab.type === 'memory';
+      const isRegularFile = activeTab.type === 'file' || !activeTab.type; // Include files with no type
       
+      // Check if we have GitHub credentials for direct push
+      // Allow API push for both memory files and regular files that have content in the editor
+      const hasFileContent = isMemoryFile 
+        ? getCurrentMemoryFileContent(activeTab.fileId)
+        : fileContents[activeTab.id] || '';
+      
+      const canPushDirectly = githubToken && repoUrl && hasFileContent && (isMemoryFile || isRegularFile);
+      
+      console.log('🔍 Debug GitHub API conditions:', {
+        githubToken: githubToken ? `${githubToken.substring(0, 4)}...` : 'NOT SET',
+        repoUrl: repoUrl || 'NOT SET',
+        isMemoryFile,
+        isRegularFile,
+        hasFileContent: hasFileContent ? `${hasFileContent.length} chars` : 'NO CONTENT',
+        canPushDirectly,
+        fileName: activeTab.name,
+        fileId: activeTab.fileId,
+        tabType: activeTab.type
+      });
+      
+      if (canPushDirectly) {
+        // Direct GitHub API push for files with content - no confirmation needed
+        console.log('🚀 Attempting direct GitHub API push...');
+        
+        const fileContent = isMemoryFile 
+          ? getCurrentMemoryFileContent(activeTab.fileId)
+          : fileContents[activeTab.id] || '';
+        
+        console.log('📝 File content length:', fileContent?.length || 0);
+        
+        const branch = branchName.trim() || (createPR ? `feature/${fileName.replace(/[^a-zA-Z0-9]/g, '-')}-${Date.now()}` : 'main');
+        console.log('🌿 Using branch:', branch);
+        
+        try {
+          const result = await pushMemoryFileToGitHub(fileName, fileContent, commitMessage, branch);
+          console.log('✅ GitHub push successful:', result);
+          
+          // Create Pull Request if requested
+          let prResult = null;
+          if (createPR && branch !== 'main') {
+            const prTitleText = prTitle.trim() || `Update ${fileName}`;
+            const prDescriptionText = prDescription.trim() || `${commitMessage}\n\nFile: ${fileName}`;
+            
+            try {
+              prResult = await createGitHubPullRequest(branch, prTitleText, prDescriptionText, 'main');
+              console.log(`✅ Created Pull Request #${prResult.number}:`, prResult.url);
+            } catch (prError) {
+              console.error('❌ Failed to create Pull Request:', prError);
+              // Continue without failing the entire operation
+            }
+          }
+          
+          // Save GitHub token to localStorage if provided
+          if (githubToken && githubToken !== localStorage.getItem('github_token')) {
+            localStorage.setItem('github_token', githubToken);
+          }
+          
+          // Close the dialog immediately after successful push
+          setShowGitCommitDialog(false);
+          setCommitMessage('');
+          setCreatePR(false);
+          setPrTitle('');
+          setPrDescription('');
+          setBranchName('');
+          
+          // Show success notification in console only
+          console.log(`✅ Successfully pushed "${fileName}" to GitHub:`, {
+            url: result.url,
+            commit: result.commit.sha.substring(0, 7),
+            branch: branch,
+            pullRequest: prResult ? `#${prResult.number} - ${prResult.url}` : null
+          });
+          
+          return; // Exit function after successful API push
+        } catch (apiError) {
+          console.error('❌ GitHub API push failed:', apiError);
+          // Log error details but don't show alert for API errors
+          console.error('GitHub API Error Details:', {
+            message: apiError.message,
+            token: githubToken ? 'Present' : 'Missing',
+            repoUrl,
+            fileName
+          });
+          return; // Don't fall back to manual instructions for API errors
+        }
+      }
+      
+      // Only show manual instructions if API push is not available
       let instructions = '';
       
       if (createPR) {
@@ -576,7 +976,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         if (isMemoryFile) {
           instructions = `To commit the memory file "${fileName}" and create a Pull Request:
 
-1. First save the file to disk:
+1. Save the file to disk:
    - Press Ctrl+S (or Cmd+S on Mac) to save
    - Choose a location in your Git repository
    - Name the file "${fileName}"
@@ -644,7 +1044,7 @@ Repository: ${repoUrl || 'Configure repository URL in dialog'}`;
         if (isMemoryFile) {
           instructions = `To commit the memory file "${fileName}", follow these steps:
 
-1. First save the file to disk:
+1. Save the file to disk:
    - Press Ctrl+S (or Cmd+S on Mac) to save
    - Choose a location on your file system
    - Name the file "${fileName}"
@@ -659,9 +1059,7 @@ Repository: ${repoUrl || 'Configure repository URL in dialog'}`;
    git commit -m "${commitMessage}"
 
 5. Push to remote repository:
-   git push
-
-Note: Memory files exist only in browser memory until saved to disk.`;
+   git push`;
         } else {
           instructions = `To commit the file "${fileName}", run these commands in your terminal:
 
@@ -678,9 +1076,9 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
         }
       }
 
-      // Show instructions in a modal or alert
+      // Show instructions for manual workflow only
       const proceed = window.confirm(instructions + '\n\nWould you like to copy these commands to clipboard?');
-      
+        
       if (proceed) {
         let commandsOnly = '';
         
@@ -700,10 +1098,9 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
         
         try {
           await navigator.clipboard.writeText(commandsOnly);
-          alert(`${createPR ? 'Git + PR' : 'Git'} commands copied to clipboard!`);
+          console.log(`${createPR ? 'Git + PR' : 'Git'} commands copied to clipboard!`);
         } catch (err) {
           console.log('Could not copy to clipboard:', err);
-          alert('Commands ready - please copy them manually from the previous dialog.');
         }
       }
       
@@ -712,7 +1109,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
         localStorage.setItem('github_token', githubToken);
       }
       
-      // Close dialog and reset
+      // Close dialog and reset for manual workflows
       setShowGitCommitDialog(false);
       setCommitMessage('');
       setCreatePR(false);
@@ -721,12 +1118,16 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
       setBranchName('');
       
     } catch (error) {
-      console.error('Git commit error:', error);
-      alert('Error generating Git commands. Please try again.');
+      console.error('❌ Git commit error:', error);
+      // Log error details instead of showing alert
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack
+      });
     } finally {
       setIsCommitting(false);
     }
-  }, [activeTab, commitMessage, createPR, prTitle, prDescription, branchName, githubToken, repoUrl]);
+  }, [activeTab, commitMessage, createPR, prTitle, prDescription, branchName, githubToken, repoUrl, getCurrentMemoryFileContent, fileContents, pushMemoryFileToGitHub, createGitHubPullRequest]);
 
   const closeGitCommitDialog = useCallback(() => {
     setShowGitCommitDialog(false);
@@ -936,7 +1337,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
         if (activeTab?.type === 'memory') {
           sqlContent = getCurrentMemoryFileContent(activeTab?.fileId);
         } else {
-          sqlContent = fileContents[activeTab?.name] || '';
+          sqlContent = fileContents[activeTab?.id] || '';
         }
         
         console.log('⌨️ Ctrl+Enter SQL execution:', {
@@ -1415,6 +1816,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                 }
               `}
               onClick={() => setActiveTab(tab.id)}
+              onContextMenu={(e) => handleTabContextMenu(e, tab)}
               title={isDeleted ? `${tab.name} (deleted)` : tab.name}
             >
               {/* File Icon - Simple colored indicator */}
@@ -1561,10 +1963,11 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                   if (activeTab?.type === 'memory') {
                     sqlContent = getCurrentMemoryFileContent(activeTab?.fileId);
                   } else {
-                    sqlContent = fileContents[activeTab?.name] || '';
+                    sqlContent = fileContents[activeTab?.id] || '';
                   }
                   console.log('🚀 Running SQL from MainEditor:', {
                     tabType: activeTab?.type,
+                    tabId: activeTab?.id,
                     fileId: activeTab?.fileId,
                     contentLength: sqlContent?.length,
                     contentPreview: sqlContent?.substring(0, 100)
@@ -1574,8 +1977,8 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                 disabled={sqlExecution.isExecuting || !activeConnectionId}
                 className={`px-3 py-1 text-xs rounded flex items-center gap-1 transition-colors ${
                   sqlExecution.isExecuting || !activeConnectionId
-                    ? `${colors.textMuted} cursor-not-allowed opacity-50 ${colors.border}` 
-                    : `${colors.primary} text-white hover:bg-green-600`
+                    ? `bg-gray-300 text-gray-500 cursor-not-allowed opacity-50 border border-gray-300 dark:bg-gray-600 dark:text-gray-400 dark:border-gray-600` 
+                    : `bg-green-600 text-white hover:bg-green-700 border border-green-600 hover:border-green-700`
                 }`}
                 title={
                   !activeConnectionId 
@@ -1592,7 +1995,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                   </>
                 ) : (
                   <>
-                    ▶️
+                    <FaPlay />
                     Run SQL
                   </>
                 )}
@@ -1677,7 +2080,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                     className={`flex items-center gap-1 px-2 py-1 text-xs ${colors.textMuted} hover:${colors.text} hover:${colors.accentBg} hover:bg-opacity-20 rounded transition-colors`}
                     title={`Git commit ${activeTab.type === 'memory' ? 'memory file' : 'file'}: ${activeTab.name}`}
                   >
-                    <FaCodeBranch size={12} />
+                    <FaGitAlt size={12} />
                     <span>Commit</span>
                   </button>
                 )}
@@ -1759,65 +2162,82 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
 
       {/* Git Commit Dialog */}
       {showGitCommitDialog && activeTab && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className={`${colors.secondary} rounded-lg border ${colors.borderLight} w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto`}>
-            {/* Dialog Header */}
-            <div className={`px-6 py-4 border-b ${colors.borderLight}`}>
-              <h3 className={`text-lg font-semibold ${colors.text} flex items-center gap-2`}>
-                <FaCodeBranch />
-                Git Commit {createPR ? '+ Pull Request' : ''} {activeTab.type === 'memory' ? 'Memory File' : 'File'}
-              </h3>
-              <p className={`text-sm ${colors.textMuted} mt-1`}>
-                {activeTab.type === 'memory' 
-                  ? `Prepare to commit memory file: ${activeTab.name}`
-                  : `Commit file: ${activeTab.name}`
-                }
-                {createPR && ' and create a Pull Request'}
-              </p>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className={`${colors.primary} rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden border ${colors.borderLight}`}>
+            
+            {/* Header */}
+            <div className={`px-6 py-5 border-b ${colors.borderLight} bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-gray-800 dark:to-gray-900`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-lg ${createPR ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'} dark:bg-opacity-20`}>
+                    {createPR ? <VscGitPullRequest size={20} /> : <BiGitCommit size={20} />}
+                  </div>
+                  <div>
+                    <h3 className={`text-lg font-semibold ${colors.text}`}>
+                      {createPR ? 'Create Pull Request' : 'Commit Changes'}
+                    </h3>
+                    <p className={`text-sm ${colors.textMuted}`}>
+                      {activeTab.name}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowGitCommitDialog(false)}
+                  className={`p-2 rounded-lg ${colors.hover} ${colors.textMuted} hover:${colors.text} transition-colors`}
+                >
+                  <FaTimes size={16} />
+                </button>
+              </div>
             </div>
 
-            {/* Dialog Content */}
-            <div className="px-6 py-4 space-y-4">
+            {/* Content */}
+            <div className="px-6 py-6 space-y-6 overflow-y-auto max-h-[60vh]">
+              
               {/* Commit Message */}
-              <div>
-                <label className={`block text-sm font-medium ${colors.text} mb-2`}>
-                  Commit Message *
+              <div className="space-y-2">
+                <label className={`text-sm font-medium ${colors.text}`}>
+                  Commit Message
                 </label>
                 <textarea
                   value={commitMessage}
                   onChange={(e) => setCommitMessage(e.target.value)}
-                  placeholder={`${activeTab.type === 'memory' ? 'Add memory file' : 'Update'} ${activeTab.name}`}
-                  className={`w-full px-3 py-2 ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text} resize-none`}
+                  placeholder={`${activeTab.type === 'memory' ? 'Add' : 'Update'} ${activeTab.name}`}
+                  className={`w-full px-4 py-3 ${colors.secondary} border ${colors.borderLight} rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${colors.text} resize-none transition-all`}
                   rows={3}
-                  autoFocus
                 />
               </div>
 
-              {/* Create PR Toggle */}
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  id="createPR"
-                  checked={createPR}
-                  onChange={(e) => setCreatePR(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <label htmlFor="createPR" className={`text-sm font-medium ${colors.text} flex items-center gap-2`}>
-                  <span>🔄 Create Pull Request</span>
-                  <span className={`text-xs ${colors.textMuted}`}>(Advanced Git workflow)</span>
+              {/* Pull Request Toggle */}
+              <div className={`p-4 rounded-lg border ${colors.borderLight} ${colors.secondary}`}>
+                <label className="flex items-center justify-between cursor-pointer">
+                  <div className="flex items-center gap-3">
+                    <VscGitPullRequest className="text-green-500" size={20} />
+                    <div>
+                      <div className={`font-medium ${colors.text}`}>Create Pull Request</div>
+                      <div className={`text-sm ${colors.textMuted}`}>Create a PR for code review</div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={createPR}
+                    onChange={(e) => setCreatePR(e.target.checked)}
+                    className="w-5 h-5 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500"
+                  />
                 </label>
               </div>
 
               {/* PR Details Section */}
               {createPR && (
-                <div className={`border ${colors.borderLight} rounded-lg p-4 space-y-4 bg-opacity-50 ${colors.accentBg}`}>
-                  <h4 className={`text-sm font-semibold ${colors.text} flex items-center gap-2`}>
-                    🚀 Pull Request Details
-                  </h4>
+                <div className={`border ${colors.borderLight} rounded-lg p-5 space-y-4 ${colors.tertiary}`}>
+                  <div className="flex items-center gap-2 mb-4">
+                    <FaCog className="text-gray-500" size={16} />
+                    <h4 className={`font-medium ${colors.text}`}>Pull Request Configuration</h4>
+                  </div>
                   
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-4">
+                    {/* Branch Name */}
                     <div>
-                      <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+                      <label className={`block text-sm font-medium ${colors.text} mb-2`}>
                         Branch Name
                       </label>
                       <input
@@ -1825,11 +2245,34 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                         value={branchName}
                         onChange={(e) => setBranchName(e.target.value)}
                         placeholder={`feature/${activeTab.name.replace(/[^a-zA-Z0-9]/g, '-')}-update`}
-                        className={`w-full px-3 py-2 text-sm ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text}`}
+                        className={`w-full px-4 py-3 ${colors.primary} border ${colors.borderLight} rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text} transition-all`}
                       />
+                      
+                      {/* Branch Examples */}
+                      <div className="mt-3">
+                        <div className={`text-xs font-medium ${colors.textMuted} mb-2`}>Quick Select:</div>
+                        <div className="flex flex-wrap gap-2">
+                          {['feature/new-component', 'bugfix/fix-issue', 'hotfix/urgent', 'dev'].map(example => (
+                            <button
+                              key={example}
+                              onClick={() => setBranchName(example)}
+                              className={`px-3 py-1 text-xs rounded-full transition-all ${
+                                theme === 'dark' 
+                                  ? 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
+                                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300'
+                              }`}
+                              type="button"
+                            >
+                              {example}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
+
+                    {/* Repository URL */}
                     <div>
-                      <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+                      <label className={`block text-sm font-medium ${colors.text} mb-2`}>
                         Repository URL
                       </label>
                       <input
@@ -1837,101 +2280,201 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                         value={repoUrl}
                         onChange={(e) => setRepoUrl(e.target.value)}
                         placeholder="https://github.com/owner/repo"
-                        className={`w-full px-3 py-2 text-sm ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text}`}
+                        className={`w-full px-4 py-3 ${colors.primary} border ${colors.borderLight} rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text} transition-all`}
                       />
                     </div>
-                  </div>
 
-                  <div>
-                    <label className={`block text-sm font-medium ${colors.text} mb-1`}>
-                      PR Title
-                    </label>
-                    <input
-                      type="text"
-                      value={prTitle}
-                      onChange={(e) => setPrTitle(e.target.value)}
-                      placeholder={`Update ${activeTab.name}`}
-                      className={`w-full px-3 py-2 text-sm ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text}`}
-                    />
-                  </div>
+                    {/* PR Title */}
+                    <div>
+                      <label className={`block text-sm font-medium ${colors.text} mb-2`}>
+                        Pull Request Title
+                      </label>
+                      <input
+                        type="text"
+                        value={prTitle}
+                        onChange={(e) => setPrTitle(e.target.value)}
+                        placeholder={`Update ${activeTab.name}`}
+                        className={`w-full px-4 py-3 ${colors.primary} border ${colors.borderLight} rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text} transition-all`}
+                      />
+                    </div>
 
-                  <div>
-                    <label className={`block text-sm font-medium ${colors.text} mb-1`}>
-                      PR Description
-                    </label>
-                    <textarea
-                      value={prDescription}
-                      onChange={(e) => setPrDescription(e.target.value)}
-                      placeholder={`${commitMessage}\n\nChanges made to ${activeTab.name}`}
-                      className={`w-full px-3 py-2 text-sm ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text} resize-none`}
-                      rows={3}
-                    />
-                  </div>
+                    {/* PR Description */}
+                    <div>
+                      <label className={`block text-sm font-medium ${colors.text} mb-2`}>
+                        Description
+                      </label>
+                      <textarea
+                        value={prDescription}
+                        onChange={(e) => setPrDescription(e.target.value)}
+                        placeholder="Describe your changes..."
+                        className={`w-full px-4 py-3 ${colors.primary} border ${colors.borderLight} rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text} resize-none transition-all`}
+                        rows={3}
+                      />
+                    </div>
 
-                  <div>
-                    <label className={`block text-sm font-medium ${colors.text} mb-1`}>
-                      GitHub Token (Optional - for API operations)
-                    </label>
-                    <input
-                      type="password"
-                      value={githubToken}
-                      onChange={(e) => setGithubToken(e.target.value)}
-                      placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                      className={`w-full px-3 py-2 text-sm ${colors.primary} border ${colors.borderLight} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text}`}
-                    />
-                    <p className={`text-xs ${colors.textMuted} mt-1`}>
-                      💡 Token is saved locally and used for GitHub API operations
-                    </p>
+                    {/* GitHub Token */}
+                    <div>
+                      <label className={`block text-sm font-medium ${colors.text} mb-2`}>
+                        GitHub Token (Optional)
+                      </label>
+                      <input
+                        type="password"
+                        value={githubToken}
+                        onChange={(e) => setGithubToken(e.target.value)}
+                        placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                        className={`w-full px-4 py-3 ${colors.primary} border ${colors.borderLight} rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors.text} transition-all`}
+                      />
+                      <p className={`text-xs ${colors.textMuted} mt-1 flex items-center gap-1`}>
+                        <FaInfoCircle />
+                        Saved locally for GitHub API operations
+                      </p>
+                    </div>
                   </div>
                 </div>
               )}
-              
-              {activeTab.type === 'memory' && (
-                <div className={`p-3 ${colors.accentBg} bg-opacity-20 rounded-md`}>
-                  <p className={`text-xs ${colors.textMuted}`}>
-                    💡 <strong>Tip:</strong> Memory files need to be saved to disk before committing. 
-                    You&apos;ll get instructions on how to save and commit this file{createPR ? ' and create the PR' : ''}.
-                  </p>
-                </div>
-              )}
 
-              {createPR && (
-                <div className={`p-3 border-l-4 border-blue-500 ${colors.secondary} bg-opacity-50`}>
-                  <p className={`text-xs ${colors.text}`}>
-                    <strong>🔄 PR Workflow:</strong> This will create a new branch, commit your changes, push to GitHub, and provide instructions for creating a Pull Request.
-                  </p>
+              {/* Info Panel */}
+              <div className={`p-4 rounded-lg border-l-4 border-blue-500 ${colors.tertiary}`}>
+                <div className="flex items-start gap-3">
+                  <FaLightbulb className="text-blue-500 mt-0.5" size={16} />
+                  <div>
+                    <div className={`text-sm font-medium ${colors.text}`}>
+                      {createPR ? 'Pull Request Workflow' : 'Direct Commit'}
+                    </div>
+                    <div className={`text-sm ${colors.textMuted} mt-1`}>
+                      {createPR 
+                        ? 'Creates a new branch, commits changes, and opens a Pull Request for review.'
+                        : 'Commits changes directly to the repository.'
+                      }
+                    </div>
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
 
-            {/* Dialog Actions */}
-            <div className={`px-6 py-4 border-t ${colors.borderLight} flex justify-end gap-3`}>
+            {/* Footer */}
+            <div className={`px-6 py-4 border-t ${colors.borderLight} flex items-center justify-between`}>
               <button
-                onClick={closeGitCommitDialog}
-                className={`px-4 py-2 text-sm ${colors.textMuted} hover:${colors.text} transition-colors`}
-                disabled={isCommitting}
+                onClick={() => setShowGitCommitDialog(false)}
+                className={`px-4 py-2 text-sm font-medium ${colors.textMuted} ${colors.hover} rounded-lg transition-colors`}
               >
                 Cancel
               </button>
               <button
                 onClick={performGitCommit}
                 disabled={!commitMessage.trim() || isCommitting}
-                className={`px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2`}
+                className={`px-6 py-3 text-sm font-medium text-white rounded-lg transition-all ${
+                  !commitMessage.trim() || isCommitting
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-blue-600 hover:bg-blue-700 shadow-lg hover:shadow-xl'
+                } flex items-center gap-2`}
               >
                 {isCommitting ? (
                   <>
-                    <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
-                    Processing...
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Committing...
                   </>
                 ) : (
                   <>
-                    <FaCodeBranch size={12} />
-                    {createPR 
-                      ? (activeTab.type === 'memory' ? 'Show Save, Commit & PR Steps' : 'Show Git + PR Commands')
-                      : (activeTab.type === 'memory' ? 'Show Save & Commit Steps' : 'Show Git Commands')
-                    }
+                    {createPR ? <VscGitPullRequest size={16} /> : <BiGitCommit size={16} />}
+                    {createPR ? 'Create PR' : 'Commit'}
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab Context Menu */}
+      {showTabContextMenu && contextMenuTab && (
+        <div 
+          className={`fixed z-50 ${colors.secondary} ${colors.border} border rounded-lg shadow-lg py-1 min-w-[150px]`}
+          style={{ 
+            left: contextMenuPosition.x, 
+            top: contextMenuPosition.y,
+            transform: 'translate(-50%, 0)'
+          }}
+        >
+          <button
+            onClick={handleTabRename}
+            className={`w-full px-3 py-2 text-left text-sm ${colors.text} hover:${colors.hover} transition-colors`}
+          >
+            Rename
+          </button>
+          {contextMenuTab.type === 'memory' && (
+            <button
+              onClick={() => {
+                saveMemoryToDisk(contextMenuTab.name);
+                closeContextMenu();
+              }}
+              className={`w-full px-3 py-2 text-left text-sm ${colors.text} hover:${colors.hover} transition-colors`}
+            >
+              Save to Disk
+            </button>
+          )}
+          <hr className={`my-1 ${colors.border} border-t`} />
+          <button
+            onClick={() => {
+              closeTab(contextMenuTab.id);
+              closeContextMenu();
+            }}
+            className={`w-full px-3 py-2 text-left text-sm ${colors.error} hover:${colors.hover} transition-colors`}
+          >
+            Close Tab
+          </button>
+        </div>
+      )}
+
+      {/* Rename Dialog */}
+      {showRenameDialog && renamingTab && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className={`${colors.secondary} ${colors.border} border rounded-lg p-6 w-80 max-w-md`}>
+            <h3 className={`text-lg font-semibold ${colors.text} mb-4`}>
+              Rename {renamingTab.type === 'memory' ? 'Memory File' : 'Tab'}
+            </h3>
+            <div className="mb-4">
+              <label className={`block text-sm ${colors.textSecondary} mb-2`}>
+                Current name: {renamingTab.name}
+              </label>
+              <label className={`block text-sm ${colors.textSecondary} mb-2`}>
+                New name:
+              </label>
+              <input
+                type="text"
+                value={newTabName}
+                onChange={(e) => setNewTabName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    confirmTabRename();
+                  } else if (e.key === 'Escape') {
+                    cancelTabRename();
+                  }
+                }}
+                placeholder="Enter new name"
+                className={`w-full px-3 py-2 ${colors.primary} ${colors.border} border rounded text-sm ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                autoFocus
+              />
+              <p className={`text-xs ${colors.textMuted} mt-1`}>
+                {renamingTab.type === 'memory' 
+                  ? 'This will rename the memory file'
+                  : 'This will rename the tab only'
+                }
+              </p>
+            </div>
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={cancelTabRename}
+                className={`px-4 py-2 text-sm ${colors.textMuted} hover:${colors.text} transition-colors`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmTabRename}
+                disabled={!newTabName.trim() || newTabName.trim() === renamingTab.name}
+                className={`px-4 py-2 text-sm ${colors.accentBg} text-white rounded-md hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors`}
+              >
+                Rename
               </button>
             </div>
           </div>

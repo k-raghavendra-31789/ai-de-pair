@@ -11,8 +11,28 @@ export const useTheme = () => {
 };
 
 export const ThemeProvider = ({ children }) => {
-  const [theme, setTheme] = useState('dark');
+  const [theme, setTheme] = useState(() => {
+    // Check localStorage for saved theme, default to 'light'
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('theme') || 'light';
+    }
+    return 'light';
+  });
   const [isTransitioning, setIsTransitioning] = useState(false);
+
+  // Update HTML class and localStorage when theme changes
+  useEffect(() => {
+    if (theme === 'light') {
+      document.documentElement.classList.add('light-mode');
+      document.documentElement.classList.remove('dark-mode');
+    } else {
+      document.documentElement.classList.add('dark-mode');
+      document.documentElement.classList.remove('light-mode');
+    }
+    
+    // Save theme to localStorage
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   const toggleTheme = () => {
     setIsTransitioning(true);
@@ -46,6 +66,9 @@ export const ThemeProvider = ({ children }) => {
       active: 'bg-gray-700',
       accent: 'text-blue-400',
       accentBg: 'bg-blue-500',
+      accentBgLight: 'bg-blue-500/20',
+      chatUserBg: 'bg-blue-500/30',
+      chatAiBg: 'bg-gray-700/30',
       error: 'text-red-400',
       errorBg: 'bg-red-900',
       errorBorder: 'border-red-500',
@@ -55,24 +78,27 @@ export const ThemeProvider = ({ children }) => {
     },
     light: {
       primary: 'bg-white',
-      secondary: 'bg-gray-100',
-      tertiary: 'bg-gray-200',
-      quaternary: 'bg-gray-300',
-      text: 'text-gray-900',
-      textSecondary: 'text-gray-700',
-      textMuted: 'text-gray-500',
+      secondary: 'bg-gray-50',
+      tertiary: 'bg-gray-100',
+      quaternary: 'bg-gray-200',
+      text: 'text-gray-800 font-medium', // Darker and medium weight
+      textSecondary: 'text-gray-600 font-medium', // Darker and medium weight  
+      textMuted: 'text-gray-500 font-normal', // Darker muted text
       border: 'border-gray-300',
       borderLight: 'border-gray-200',
-      hover: 'hover:bg-gray-200',
-      active: 'bg-gray-200',
-      accent: 'text-blue-600',
+      hover: 'hover:bg-gray-100',
+      active: 'bg-gray-100',
+      accent: 'text-blue-700 font-medium', // Darker blue with medium weight
       accentBg: 'bg-blue-500',
+      accentBgLight: 'bg-blue-500/20',
+      chatUserBg: 'bg-blue-500/20',
+      chatAiBg: 'bg-gray-100/80',
       tooltip: 'bg-gray-800 border-gray-600 text-gray-100',
-      error: 'text-red-600',
-      errorBg: 'bg-red-100',
+      error: 'text-red-700 font-medium', // Darker red with medium weight
+      errorBg: 'bg-red-50',
       errorBorder: 'border-red-300',
-      warning: 'text-orange-600',
-      success: 'text-green-600',
+      warning: 'text-orange-700 font-medium', // Darker orange with medium weight
+      success: 'text-green-700 font-medium', // Darker green with medium weight
       successBg: 'bg-green-500',
     }
   };

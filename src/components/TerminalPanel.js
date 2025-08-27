@@ -27,6 +27,8 @@ const TerminalPanel = () => {
   const [sqlQuery, setSqlQuery] = useState('');
   const [sqlResults, setSqlResults] = useState(null);
   const [isExecutingSql, setIsExecutingSql] = useState(false);
+  const [showReconnectModal, setShowReconnectModal] = useState(false);
+  const [reconnectConnectionId, setReconnectConnectionId] = useState(null);
 
   // Watch for SQL execution results from AppState and create result tabs
   useEffect(() => {
@@ -128,6 +130,26 @@ const TerminalPanel = () => {
     }
   }, [sqlExecution]);
 
+  // Check for connections that need tokens after page refresh
+  useEffect(() => {
+    if (state.activeConnectionId && state.dbConnections.length > 0) {
+      const activeConnection = state.dbConnections.find(c => c.id === state.activeConnectionId);
+      if (activeConnection) {
+        // Import the service to check if token exists
+        import('../services/DatabaseConnectionService').then(module => {
+          const { databaseConnectionService } = module;
+          const hasToken = databaseConnectionService.hasValidToken(state.activeConnectionId);
+          
+          if (!hasToken) {
+            // Active connection exists but no access token - show reconnect modal
+            setReconnectConnectionId(state.activeConnectionId);
+            setShowReconnectModal(true);
+          }
+        });
+      }
+    }
+  }, [state.activeConnectionId, state.dbConnections]);
+
   // Connection management handlers
   const addConnection = async (connectionData) => {
     try {
@@ -170,6 +192,23 @@ const TerminalPanel = () => {
     if (window.confirm('Are you sure you want to delete this connection?')) {
       // Remove from app state
       actions.deleteDbConnection(connectionId);
+    }
+  };
+
+  const handleReconnect = async (accessToken) => {
+    try {
+      const { ConnectionManager } = await import('../services/ConnectionManager');
+      const result = ConnectionManager.reconnectWithToken(reconnectConnectionId, accessToken, actions);
+      
+      if (result.success) {
+        setShowReconnectModal(false);
+        setReconnectConnectionId(null);
+        return { success: true };
+      } else {
+        return { success: false, error: result.error };
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   };
 
@@ -323,167 +362,74 @@ const TerminalPanel = () => {
   const renderConfigureTab = () => {
     return (
       <div className="h-full flex flex-col">
-        {/* Connection Management Header */}
-        <div className={`${colors.border} border-b p-4`}>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className={`text-lg font-semibold ${colors.text}`}>Database Connections</h3>
-            <div className="flex gap-2">
-              {state.activeConnectionId && (
-                <button
-                  onClick={() => setShowSqlPanel(!showSqlPanel)}
-                  className={`
-                    px-3 py-1 text-sm rounded-md ${showSqlPanel ? 'bg-blue-600' : colors.secondary} 
-                    ${showSqlPanel ? 'text-white' : colors.text} border ${colors.border}
-                    hover:opacity-80 transition-opacity flex items-center gap-2
-                  `}
-                >
-                  <span className="text-xs">💻</span>
-                  SQL
-                </button>
-              )}
-              <button
-                onClick={() => setShowAddConnection(true)}
-                className={`
-                  px-3 py-1 text-sm rounded-md ${colors.accent} text-white 
-                  hover:opacity-80 transition-opacity flex items-center gap-2
-                `}
-              >
-                <span className="text-xs">+</span>
-                Add Connection
-              </button>
-            </div>
-          </div>
-          
-          {/* Active Connection Status */}
-          {state.activeConnectionId && (
-            <div className={`text-sm ${colors.textSecondary} flex items-center gap-2`}>
-              <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-              Active: {dbConnections.find(c => c.id === state.activeConnectionId)?.name}
-            </div>
-          )}
-        </div>
-
-        {/* SQL Panel */}
-        {showSqlPanel && state.activeConnectionId && (
-          <div className={`${colors.border} border-b p-4 ${colors.secondary}`}>
-            <div className="mb-3">
-              <label className={`block text-sm font-medium ${colors.text} mb-2`}>
-                SQL Query
-              </label>
-              <textarea
-                value={sqlQuery}
-                onChange={(e) => setSqlQuery(e.target.value)}
-                className={`
-                  w-full h-24 px-3 py-2 ${colors.primary} ${colors.border} border rounded-md
-                  ${colors.text} font-mono text-sm resize-none
-                  focus:outline-none focus:ring-2 focus:ring-blue-500
-                `}
-                placeholder="SELECT * FROM my_table LIMIT 10;"
-              />
-            </div>
-            
-            <div className="flex items-center gap-3">
-              <button
-                onClick={executeSql}
-                disabled={isExecutingSql || !sqlQuery.trim()}
-                className={`
-                  px-4 py-2 rounded-md ${colors.accent} text-white text-sm
-                  hover:opacity-80 transition-opacity disabled:opacity-50
-                  flex items-center gap-2
-                `}
-              >
-                {isExecutingSql ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    Executing...
-                  </>
-                ) : (
-                  <>
-                    <span>▶️</span>
-                    Execute
-                  </>
-                )}
-              </button>
-              
-              <button
-                onClick={() => setSqlQuery('')}
-                className={`
-                  px-3 py-2 rounded-md ${colors.border} border ${colors.textSecondary}
-                  hover:${colors.text} transition-colors text-sm
-                `}
-              >
-                Clear
-              </button>
-            </div>
-
-            {/* SQL Results */}
-            {sqlResults && (
-              <div className="mt-4">
-                <h4 className={`text-sm font-medium ${colors.text} mb-2`}>Results:</h4>
-                <div className={`
-                  p-3 rounded-md ${colors.primary} ${colors.border} border
-                  max-h-48 overflow-y-auto
-                `}>
-                  {sqlResults.error ? (
-                    <div className="text-red-400 text-sm">
-                      <div className="mb-2">❌ Query failed</div>
-                      <div className={`${colors.textSecondary} text-xs`}>
-                        {sqlResults.error}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-green-400 text-sm">
-                      <div className="mb-2">✅ Query executed successfully</div>
-                      <div className="mb-2 text-blue-400">
-                        Found {sqlResults.results ? sqlResults.results.length : 0} rows
-                      </div>
-                      <div className={`${colors.textSecondary} text-xs`}>
-                        Results opened in new tab above ⬆️
-                      </div>
-                    </div>
-                  )}
+        {/* Database Connections Section */}
+        <div className="flex-1 p-4">
+          <div className="h-full flex flex-col">
+              {/* Header */}
+              <div className={`${colors.border} border-b pb-3 mb-4`}>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className={`text-lg font-semibold ${colors.text}`}>Database Connections</h3>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowAddConnection(true)}
+                      className={`
+                        px-3 py-1 text-sm rounded-md ${colors.accentBg} text-white 
+                        hover:opacity-80 transition-opacity flex items-center gap-2
+                      `}
+                    >
+                      <span className="text-xs">+</span>
+                      Add Connection
+                    </button>
+                  </div>
                 </div>
+                
+                {/* Active Connection Status */}
+                {state.activeConnectionId && (
+                  <div className={`text-sm ${colors.textSecondary} flex items-center gap-2`}>
+                    <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                    Active: {dbConnections.find(c => c.id === state.activeConnectionId)?.name}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        )}
 
-        {/* Connections Grid */}
-        <div className="flex-1 p-4 overflow-y-auto">
-          {dbConnections.length === 0 ? (
-            <div className={`flex items-center justify-center h-full ${colors.textMuted}`}>
-              <div className="text-center">
-                <div className="text-4xl mb-4">🔌</div>
-                <div className="text-lg mb-2">No Database Connections</div>
-                <div className="text-sm mb-4">Add your first connection to get started</div>
-                <button
-                  onClick={() => setShowAddConnection(true)}
-                  className={`
-                    px-4 py-2 rounded-md ${colors.accent} text-white 
-                    hover:opacity-80 transition-opacity
-                  `}
-                >
-                  Add Connection
-                </button>
+              {/* Connections Grid */}
+              <div className="flex-1 overflow-y-auto">
+                {dbConnections.length === 0 ? (
+                  <div className={`flex items-center justify-center h-full ${colors.textMuted}`}>
+                    <div className="text-center">
+                      <div className="text-4xl mb-4">�</div>
+                      <div className="text-lg mb-2">No Database Connections</div>
+                      <div className="text-sm mb-4">Add your first connection to get started</div>
+                      <button
+                        onClick={() => setShowAddConnection(true)}
+                        className={`
+                          px-4 py-2 rounded-md ${colors.accentBg} text-white 
+                          hover:opacity-80 transition-opacity
+                        `}
+                      >
+                        Add Connection
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+                    {dbConnections.map(connection => (
+                      <ConnectionCard
+                        key={connection.id}
+                        connection={connection}
+                        isActive={state.activeConnectionId === connection.id}
+                        status={state.connectionStatus[connection.id]}
+                        onActivate={() => actions.setActiveConnection(connection.id)}
+                        onTest={() => testConnection(connection.id)}
+                        onEdit={() => editConnection(connection)}
+                        onDelete={() => deleteConnection(connection.id)}
+                        colors={colors}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {dbConnections.map(connection => (
-                <ConnectionCard
-                  key={connection.id}
-                  connection={connection}
-                  isActive={state.activeConnectionId === connection.id}
-                  status={state.connectionStatus[connection.id]}
-                  onActivate={() => actions.setActiveConnection(connection.id)}
-                  onTest={() => testConnection(connection.id)}
-                  onEdit={() => editConnection(connection)}
-                  onDelete={() => deleteConnection(connection.id)}
-                  colors={colors}
-                />
-              ))}
-            </div>
-          )}
         </div>
 
         {/* Add Connection Modal */}
@@ -501,6 +447,19 @@ const TerminalPanel = () => {
             connection={editingConnection}
             onClose={() => setEditingConnection(null)}
             onSave={saveConnection}
+            colors={colors}
+          />
+        )}
+
+        {/* Reconnect Modal */}
+        {showReconnectModal && reconnectConnectionId && (
+          <ReconnectModal
+            connection={state.dbConnections.find(c => c.id === reconnectConnectionId)}
+            onClose={() => {
+              setShowReconnectModal(false);
+              setReconnectConnectionId(null);
+            }}
+            onReconnect={handleReconnect}
             colors={colors}
           />
         )}
@@ -589,7 +548,8 @@ const TerminalPanel = () => {
     // Handle successful results
     return (
       <div className="h-full flex flex-col">
-        {/* Results Header */}
+        {/* Results Header - Hidden to save space */}
+        {/* Commented out to maximize data display area
         <div className={`${colors.border} border-b p-4`}>
           <div className="flex items-center justify-between">
             <div>
@@ -618,9 +578,10 @@ const TerminalPanel = () => {
             </div>
           </div>
         </div>
+        */}
 
-        {/* Results Table */}
-        <div className="flex-1 overflow-auto p-4">
+        {/* Results Table - Now takes full height */}
+        <div className="flex-1 overflow-auto p-2">
           <ResultsTable results={tab.results.results} colors={colors} />
         </div>
       </div>
@@ -725,7 +686,7 @@ const TerminalPanel = () => {
   );
 };
 
-// Connection Card Component
+// Connection Card Component - Compact Version
 const ConnectionCard = ({ connection, isActive, status, onActivate, onTest, onEdit, onDelete, colors }) => {
   const isConnected = status?.isConnected;
   const hasError = status?.error;
@@ -733,96 +694,88 @@ const ConnectionCard = ({ connection, isActive, status, onActivate, onTest, onEd
 
   return (
     <div className={`
-      ${colors.secondary} ${colors.border} border rounded-lg p-4 transition-all
-      ${isActive ? 'ring-2 ring-blue-500' : 'hover:border-gray-500'}
+      ${colors.secondary} ${colors.border} border rounded-md p-2 transition-all text-xs
+      ${isActive ? 'ring-1 ring-blue-500 bg-blue-900/20' : 'hover:border-gray-500'}
     `}>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${
+      {/* Compact Header */}
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-1">
+          <div className={`w-2 h-2 rounded-full ${
             notTested ? 'bg-gray-500' : isConnected ? 'bg-green-500' : 'bg-red-500'
           }`}></div>
-          <h4 className={`font-semibold ${colors.text}`}>{connection.name}</h4>
+          <h4 className={`font-medium ${colors.text} truncate text-sm`}>{connection.name}</h4>
           {isActive && (
-            <span className="px-2 py-1 text-xs bg-blue-500 text-white rounded">Active</span>
+            <span className="px-1 py-0.5 bg-blue-500 text-white rounded text-xs">Active</span>
           )}
         </div>
         
-        {/* Actions */}
-        <div className="flex items-center gap-1">
+        {/* Compact Actions */}
+        <div className="flex items-center gap-0.5">
           <button
             onClick={onTest}
-            className={`p-1 rounded ${colors.textSecondary} hover:${colors.text} hover:bg-gray-600`}
+            className={`p-0.5 rounded ${colors.textSecondary} hover:${colors.text} hover:bg-gray-600`}
             title="Test connection"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
               <path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533L8.93 6.588zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
             </svg>
           </button>
           <button
             onClick={onEdit}
-            className={`p-1 rounded ${colors.textSecondary} hover:${colors.text} hover:bg-gray-600`}
+            className={`p-0.5 rounded ${colors.textSecondary} hover:${colors.text} hover:bg-gray-600`}
             title="Edit connection"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
               <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708L5.707 13H2v-3.707L11.146.146zM3 10.707V12h1.293L13.846 2.707 12.293 1.354 3 10.707z"/>
             </svg>
           </button>
           <button
             onClick={onDelete}
-            className={`p-1 rounded text-red-400 hover:text-red-300 hover:bg-gray-600`}
+            className={`p-0.5 rounded text-red-400 hover:text-red-300 hover:bg-gray-600`}
             title="Delete connection"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
               <path d="M6.5 1h3a.5.5 0 0 1 .5.5v1H6v-1a.5.5 0 0 1 .5-.5zM11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3A1.5 1.5 0 0 0 5 1.5v1H2.506a.58.58 0 0 0-.01 0H1.5a.5.5 0 0 0 0 1h.538l.853 10.66A2 2 0 0 0 4.885 16h6.23a2 2 0 0 0 1.994-1.84l.853-10.66h.538a.5.5 0 0 0 0-1h-.995a.59.59 0 0 0-.01 0H11z"/>
             </svg>
           </button>
         </div>
       </div>
 
-      {/* Connection Details */}
-      <div className={`text-sm ${colors.textSecondary} space-y-1 mb-3`}>
+      {/* Compact Connection Details */}
+      <div className={`text-xs ${colors.textSecondary} space-y-0.5 mb-1`}>
         <div className="truncate">
-          <strong>Host:</strong> {connection.serverHostname}
+          <span className="font-medium">Host:</span> {connection.serverHostname}
         </div>
         <div className="truncate">
-          <strong>Path:</strong> {connection.httpPath}
+          <span className="font-medium">Path:</span> {connection.httpPath}
         </div>
-        {connection.lastUsed && (
-          <div>
-            <strong>Last used:</strong> {new Date(connection.lastUsed).toLocaleDateString()}
-          </div>
-        )}
       </div>
 
-      {/* Status */}
-      {notTested && (
-        <div className="text-xs text-gray-400 mb-3 p-2 bg-gray-900/20 rounded">
-          ⚠️ Connection not tested yet. Click the test button to verify.
-        </div>
-      )}
-      
+      {/* Compact Status */}
       {hasError && (
-        <div className="text-xs text-red-400 mb-3 p-2 bg-red-900/20 rounded">
-          ❌ {status.error}
+        <div className="text-xs text-red-400 mb-1 p-1 bg-red-900/20 rounded">
+          ❌ Error
         </div>
       )}
       
       {isConnected === true && (
-        <div className="text-xs text-green-400 mb-3 p-2 bg-green-900/20 rounded">
-          ✅ Connection verified successfully
+        <div className="text-xs text-green-400 mb-1 p-1 bg-green-900/20 rounded">
+          ✅ Connected
         </div>
       )}
 
-      {/* Action Button */}
+      {notTested && (
+        <div className="text-xs text-gray-400 mb-1 p-1 bg-gray-900/20 rounded">
+          ⚠️ Not tested
+        </div>
+      )}
+
+      {/* Compact Action Button */}
       {!isActive && (
         <button
           onClick={onActivate}
-          className={`
-            w-full py-2 px-3 text-sm rounded-md ${colors.accent} text-white 
-            hover:opacity-80 transition-opacity
-          `}
+          className={`w-full px-2 py-1 text-xs rounded ${colors.accentBg} text-white hover:opacity-80 transition-opacity`}
         >
           Set as Active
         </button>
@@ -951,7 +904,7 @@ const AddConnectionModal = ({ onClose, onAdd, colors }) => {
               type="submit"
               disabled={isSubmitting}
               className={`
-                flex-1 py-2 px-4 rounded-md ${colors.accent} text-white
+                flex-1 py-2 px-4 rounded-md ${colors.accentBg} text-white
                 hover:opacity-80 transition-opacity disabled:opacity-50
               `}
             >
@@ -1014,11 +967,95 @@ const EditConnectionModal = ({ connection, onClose, onSave, colors }) => {
               type="submit"
               disabled={isSubmitting}
               className={`
-                flex-1 py-2 px-4 rounded-md ${colors.accent} text-white
+                flex-1 py-2 px-4 rounded-md ${colors.accentBg} text-white
                 hover:opacity-80 transition-opacity disabled:opacity-50
               `}
             >
               {isSubmitting ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// Reconnect Modal - for when connection persists after refresh but access token is lost
+const ReconnectModal = ({ connection, onClose, onReconnect, colors }) => {
+  const [accessToken, setAccessToken] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setError('');
+
+    const result = await onReconnect(accessToken);
+    if (result.success) {
+      onClose();
+    } else {
+      setError(result.error);
+    }
+    setIsSubmitting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className={`${colors.secondary} ${colors.border} border rounded-lg p-6 w-full max-w-md mx-4`}>
+        <h3 className={`text-lg font-semibold ${colors.text} mb-2`}>Reconnect Database</h3>
+        <p className={`text-sm ${colors.textSecondary} mb-4`}>
+          Your connection to <strong>{connection?.name}</strong> needs to be re-authenticated. 
+          Please enter your access token to continue.
+        </p>
+        
+        {error && (
+          <div className="mb-4 p-3 bg-red-900/20 border border-red-500 rounded-md">
+            <p className="text-red-400 text-sm">{error}</p>
+          </div>
+        )}
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+              Access Token
+            </label>
+            <input
+              type="password"
+              value={accessToken}
+              onChange={(e) => setAccessToken(e.target.value)}
+              className={`
+                w-full px-3 py-2 ${colors.primary} ${colors.border} border rounded-md
+                ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500
+              `}
+              placeholder="dapi_..."
+              required
+            />
+            <p className={`text-xs ${colors.textMuted} mt-1`}>
+              This token will be stored securely in memory only.
+            </p>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className={`
+                flex-1 py-2 px-4 rounded-md ${colors.border} border
+                ${colors.textSecondary} hover:${colors.text} transition-colors
+              `}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className={`
+                flex-1 py-2 px-4 rounded-md ${colors.accentBg} text-white
+                hover:opacity-80 transition-opacity disabled:opacity-50
+              `}
+            >
+              {isSubmitting ? 'Reconnecting...' : 'Reconnect'}
             </button>
           </div>
         </form>

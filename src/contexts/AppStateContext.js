@@ -10,6 +10,7 @@ const ACTION_TYPES = {
   START_MEMORY_FILE_STREAMING: 'START_MEMORY_FILE_STREAMING',
   END_MEMORY_FILE_STREAMING: 'END_MEMORY_FILE_STREAMING',
   UPDATE_MEMORY_FILE: 'UPDATE_MEMORY_FILE',
+  RENAME_MEMORY_FILE: 'RENAME_MEMORY_FILE',
   REMOVE_MEMORY_FILE: 'REMOVE_MEMORY_FILE',
   SAVE_MEMORY_FILE_TO_DISK: 'SAVE_MEMORY_FILE_TO_DISK',
   
@@ -78,6 +79,7 @@ const STORAGE_KEYS = {
   EXPANDED_FOLDERS: 'fileExplorer_expandedFolders',
   FILE_HANDLES: 'fileExplorer_fileHandles',
   DB_CONNECTIONS: 'databricks_connections', // sessionStorage key for connection metadata
+  ACTIVE_CONNECTION: 'databricks_active_connection' // sessionStorage key for active connection ID
 };
 
 // Helper function to get current content from version history
@@ -189,6 +191,28 @@ const loadDatabaseConnectionsFromStorage = () => {
   }
 };
 
+const loadActiveConnectionFromStorage = () => {
+  try {
+    const stored = sessionStorage.getItem(STORAGE_KEYS.ACTIVE_CONNECTION);
+    return stored || null;
+  } catch (error) {
+    console.warn('Failed to load active connection from sessionStorage:', error);
+    return null;
+  }
+};
+
+const saveActiveConnectionToStorage = (connectionId) => {
+  try {
+    if (connectionId) {
+      sessionStorage.setItem(STORAGE_KEYS.ACTIVE_CONNECTION, connectionId);
+    } else {
+      sessionStorage.removeItem(STORAGE_KEYS.ACTIVE_CONNECTION);
+    }
+  } catch (error) {
+    console.warn('Failed to save active connection to sessionStorage:', error);
+  }
+};
+
 // Initial State with persistence
 const createInitialState = () => ({
   // File State
@@ -240,7 +264,7 @@ const createInitialState = () => ({
   
   // Database Connection State
   dbConnections: loadDatabaseConnectionsFromStorage(), // Load from sessionStorage
-  activeConnectionId: null, // ID of currently active connection
+  activeConnectionId: loadActiveConnectionFromStorage(), // Load active connection from sessionStorage
   connectionStatus: {}, // { connectionId: { isConnected: boolean, lastChecked: Date, error: string } }
   
   // SQL Execution State
@@ -451,6 +475,24 @@ const appStateReducer = (state, action) => {
           };
         }
       }
+    }
+    
+    case ACTION_TYPES.RENAME_MEMORY_FILE: {
+      const { fileId, newName } = action.payload;
+      const file = state.memoryFiles[fileId];
+      if (!file) return state;
+      
+      return {
+        ...state,
+        memoryFiles: {
+          ...state.memoryFiles,
+          [fileId]: {
+            ...file,
+            name: newName,
+            lastModified: new Date()
+          }
+        }
+      };
     }
     
     case ACTION_TYPES.REMOVE_MEMORY_FILE: {
@@ -1100,6 +1142,9 @@ const appStateReducer = (state, action) => {
       // Clear active connection if it was deleted
       const newActiveId = state.activeConnectionId === connectionId ? null : state.activeConnectionId;
       
+      // Update active connection in storage
+      saveActiveConnectionToStorage(newActiveId);
+      
       // Remove from connection status
       const { [connectionId]: removed, ...remainingStatus } = state.connectionStatus;
       
@@ -1123,6 +1168,9 @@ const appStateReducer = (state, action) => {
       
       // Update sessionStorage
       sessionStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(updatedConnections));
+      
+      // Persist active connection ID to sessionStorage
+      saveActiveConnectionToStorage(connectionId);
       
       return {
         ...state,
@@ -1221,6 +1269,8 @@ export const AppStateProvider = ({ children }) => {
       dispatch({ type: ACTION_TYPES.END_MEMORY_FILE_STREAMING, payload: { fileId, finalContent, description } }),
     updateMemoryFile: (fileId, content, createVersion = true, description = 'Manual edit') => 
       dispatch({ type: ACTION_TYPES.UPDATE_MEMORY_FILE, payload: { fileId, content, createVersion, description } }),
+    renameMemoryFile: (fileId, newName) => 
+      dispatch({ type: ACTION_TYPES.RENAME_MEMORY_FILE, payload: { fileId, newName } }),
     removeMemoryFile: (fileId) => 
       dispatch({ type: ACTION_TYPES.REMOVE_MEMORY_FILE, payload: fileId }),
     saveMemoryFileToDisk: (fileId) => 

@@ -990,12 +990,10 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
   // Create a new file in the selected folder
   const createFile = async () => {
     if (!newFileName.trim()) {
-      showToast('Please enter a file name.', 'warning');
       return;
     }
 
     if (!selectedFolderForNewFile) {
-      showToast('Please select a folder first.', 'warning');
       return;
     }
 
@@ -1016,6 +1014,18 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       const folderId = selectedFolderForNewFile.id;
       await loadFolderChildren(folderId, selectedFolderForNewFile.handle);
 
+      // Auto-open the newly created file in a tab
+      const tabId = `tab-file-${Date.now()}`;
+      addTab({
+        id: tabId,
+        name: fileName,
+        type: 'file',
+        isActive: true,
+        isDirty: false,
+        fileHandle: fileHandle,
+        folderId: folderId
+      });
+
       // Reset form
       setNewFileName('');
       setShowCreateFileDialog(false);
@@ -1023,7 +1033,6 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
 
     } catch (error) {
       console.error('Error creating file:', error);
-      showToast('Error creating file. Please check folder permissions and try again.', 'error');
     }
   };
 
@@ -1036,12 +1045,10 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
   // Rename a file
   const renameFile = async () => {
     if (!newName.trim()) {
-      showToast('Please enter a new name.', 'warning');
       return;
     }
 
     if (!renamingFile) {
-      showToast('No file selected for renaming.', 'warning');
       return;
     }
 
@@ -1050,7 +1057,6 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       const parentFolder = findParentFolder(renamingFile.id);
       
       if (!parentFolder) {
-        showToast('Could not find parent folder.', 'error');
         return;
       }
 
@@ -1085,14 +1091,12 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
 
     } catch (error) {
       console.error('Error renaming file:', error);
-      showToast('Error renaming file. Please check permissions and try again.', 'error');
     }
   };
 
   // Delete a file
   const deleteFile = async () => {
     if (!deletingFile) {
-      showToast('No file selected for deletion.', 'warning');
       return;
     }
 
@@ -1100,7 +1104,6 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       const parentFolder = findParentFolder(deletingFile.id);
       
       if (!parentFolder) {
-        showToast('Could not find parent folder.', 'error');
         return;
       }
 
@@ -1121,7 +1124,6 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
 
     } catch (error) {
       console.error('Error deleting file:', error);
-      showToast('Error deleting file. Please check permissions and try again.', 'error');
     }
   };
 

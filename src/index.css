@@ -1,5 +1,36 @@
 @import "tailwindcss"; 
 
+/* Apply Poppins font globally with better weight for readability */
+* {
+  font-family: 'Poppins', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  font-weight: 400; /* Ensure minimum weight for readability */
+}
+
+/* Ensure better font weight for light mode */
+body {
+  font-weight: 400;
+}
+
+/* Increase font weight for light mode specifically - but only for text elements that need it */
+html.light-mode body,
+html.light-mode p,
+html.light-mode span,
+html.light-mode div {
+  font-weight: 450; /* Slightly increased weight for better visibility in light mode */
+}
+
+html.light-mode .font-normal {
+  font-weight: 450;
+}
+
+html.light-mode .font-medium {
+  font-weight: 500;
+}
+
+html.light-mode .font-semibold {
+  font-weight: 600;
+}
+
 /* Prevent body/html from scrolling */
 html, body {
   height: 100%;
