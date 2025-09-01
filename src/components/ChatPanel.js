@@ -49,6 +49,7 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   const [sseConnection, setSseConnection] = useState(null);
   const [progressData, setProgressData] = useState(null);
   const [processingStrategy, setProcessingStrategy] = useState(null); // Store strategy selection
+  const [sessionStrategy, setSessionStrategy] = useState(null); // Persist strategy for entire session
   
   const textareaRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -303,8 +304,14 @@ ORDER BY total_spent DESC;
   // SSE Connection Management
   const startSSEConnection = (sessionId, generationId) => {
     console.log(`🔥 Starting SSE connection for session: ${sessionId}`);
+    console.log(`🔥 Current sessionStrategy when starting SSE: ${sessionStrategy}`);
+    console.log(`🔥 Current processingStrategy when starting SSE: ${processingStrategy}`);
     
-    // Store the session ID for later use
+    // Store the session ID for later use - DON'T reset session strategy if same session
+    if (currentSessionId !== sessionId) {
+      console.log('🔄 New session detected, but PRESERVING session strategy for strategy continuity');
+      // DON'T reset: setSessionStrategy(null); - This was causing the strategy to be lost!
+    }
     setCurrentSessionId(sessionId);
     
     // Close existing connection if any
@@ -365,10 +372,14 @@ ORDER BY total_spent DESC;
                            data.status === 'completed' ||
                            data.event_type === 'completion' ||
                            data.event_type === 'single_pass_processing_complete' ||
+                           data.event_type === 'single_pass_complete' ||
+                           (data.event_type === 'progress' && data.data?.stage === 'complete') ||
                            (typeof data.message === 'string' && data.message?.includes('completed successfully')) ||
                            (typeof data.message?.message === 'string' && data.message?.message?.includes('completed successfully'));
         
         console.log('🎯 Completion check - extractedSQL:', !!extractedSQL, 'isCompleted:', isCompleted);
+        console.log('🔍 Processing strategy check:', processingStrategy);
+        console.log('🔍 Event type check for single_pass:', data.event_type);
         console.log('🔍 Detailed completion check:');
         console.log('  - data.message?.data?.extracted_sql:', data.message?.data?.extracted_sql ? 'FOUND' : 'NOT FOUND');
         console.log('  - data.data?.extracted_sql:', data.data?.extracted_sql ? 'FOUND' : 'NOT FOUND');
@@ -562,44 +573,121 @@ ORDER BY total_spent DESC;
         // Update existing progress message or create new one
         setChatMessages(prev => {
           console.log('🔄 Updating chat messages with SSE data, current messages count:', prev.length);
+          console.log('🔍 Looking for existing progress message with generationId:', generationId);
+          console.log('🔍 All current messages:', prev.map(m => ({ id: m.id, type: m.type, generationId: m.generationId, strategy: m.metadata?.processingStrategy })));
+          
           // Find existing progress message for this generation
           const existingIndex = prev.findIndex(msg => 
             msg.type === 'progress' && msg.generationId === generationId
           );
           
           console.log('🔍 Existing progress message index:', existingIndex);
+          if (existingIndex >= 0) {
+            console.log('🔍 Found existing progress message:', prev[existingIndex]);
+            console.log('🔍 Existing message strategy:', prev[existingIndex].metadata?.processingStrategy);
+          } else {
+            console.log('🔍 NO existing progress message found - will create new one');
+          }
           
-          // Determine current stage based on status
+          // Determine current stage based on status - MOVED UP to fix reference error
           let currentStage = data.data?.stage || data.event_type;
           let stageStatus = data.data?.status || 'in_progress';
           
+          console.log('🔍 Raw backend event:', data.event_type, 'stage:', currentStage, 'status:', stageStatus);
+          
+          // Get processing strategy from multiple sources with session persistence
+          // SESSION STRATEGY HAS ABSOLUTE PRIORITY - if set, use it unconditionally
+          let currentStrategy;
+          console.log('🔧 STRATEGY DETECTION START');
+          console.log('🔧 sessionStrategy:', sessionStrategy);
+          console.log('🔧 processingStrategy (component):', processingStrategy);
+          console.log('🔧 data.data?.processing_strategy:', data.data?.processing_strategy);
+          console.log('🔧 data.processing_strategy:', data.processing_strategy);
+          console.log('🔧 existing message strategy:', existingIndex >= 0 ? prev[existingIndex].metadata?.processingStrategy : 'N/A');
+          
+          if (sessionStrategy) {
+            console.log('🎯 Using SESSION STRATEGY (highest priority):', sessionStrategy);
+            currentStrategy = sessionStrategy;
+          } else {
+            console.log('🔧 No sessionStrategy, checking other sources...');
+            // Try other sources if no session strategy
+            currentStrategy = processingStrategy || 
+                             data.data?.processing_strategy || 
+                             data.processing_strategy ||
+                             (existingIndex >= 0 ? prev[existingIndex].metadata?.processingStrategy : null) ||
+                             // Detect strategy from event names if not explicitly set - MORE COMPREHENSIVE
+                             (currentStage?.includes('single_pass') || 
+                              currentStage === 'analysis_starting' || 
+                              currentStage === 'analysis_complete' ||
+                              currentStage === 'questions_complete' ||
+                              data.event_type?.includes('single_pass') ||
+                              data.event_type === 'analysis_starting' ||
+                              data.event_type === 'analysis_complete' ||
+                              data.event_type === 'questions_complete' ? 'single_pass' : null);
+            console.log('🔧 Fallback strategy detection result:', currentStrategy);
+          }
+          
+          console.log('🔍 Strategy detection - sessionStrategy (ABSOLUTE PRIORITY):', sessionStrategy);
+          console.log('🔍 Strategy detection - processingStrategy state:', processingStrategy);
+          console.log('🔍 Strategy detection - data.data.processing_strategy:', data.data?.processing_strategy);
+          console.log('🔍 Strategy detection - data.processing_strategy:', data.processing_strategy);
+          console.log('🔍 Strategy detection - existing message strategy:', existingIndex >= 0 ? prev[existingIndex].metadata?.processingStrategy : 'no existing message');
+          console.log('🔍 Strategy detection - event name for detection:', currentStage);
+          console.log('🔍 Strategy detection - final currentStrategy:', currentStrategy);
+          
+          // Additional fallback: if we still don't have strategy but see single_pass events, force it
+          const finalStrategy = currentStrategy || 
+                               (currentStage?.includes('single_pass') || 
+                                currentStage?.includes('analysis_') || 
+                                currentStage === 'questions_complete' ||
+                                data.event_type?.includes('single_pass') ||
+                                data.event_type?.includes('analysis_') ||
+                                data.event_type === 'questions_complete' ? 'single_pass' : 'multi_pass');
+          
+          // SESSION STRATEGY IS ABSOLUTE - if set, always use it
+          const actualStrategy = sessionStrategy ? sessionStrategy : finalStrategy;
+          
+          console.log('🔍 Strategy detection - final strategy with fallback:', finalStrategy);
+          console.log('🔍 Strategy detection - ACTUAL strategy (SESSION ABSOLUTE):', actualStrategy);
+          console.log('🔍 Strategy detection - sessionStrategy state:', sessionStrategy);
+          
+          // Don't overwrite session strategy if it's already set
+          if (actualStrategy === 'single_pass' && !sessionStrategy) {
+            console.log('💾 Persisting single_pass strategy for entire session');
+            setSessionStrategy('single_pass');
+          }
+          
           // Map backend stage names to frontend stage names
           const stageMapping = {
-            'analyzing': 'analyzing',
+            // Multi-pass events
             'parsing': 'parsing_file',
             'generating_joins': 'generating_joins',
             'generating_filters': 'generating_filters', 
             'generating_select': 'generating_select',
             'combining': 'combining',
             'complete': 'complete',
-            // Single pass mapping
-            'generating_sql': 'generating_sql'
+            
+            // Single-pass backend events → frontend stages
+            'questions_complete': 'analyzing',
+            'analysis_starting': 'analyzing', 
+            'analysis_complete': 'analyzing',
+            'single_pass_processing_start': 'generating_sql',
+            'analyzing': 'analyzing',
+            'analyzing_complete': 'analyzing',
+            'generating_sql': 'generating_sql',
+            'generating_sql_complete': 'generating_sql',
+            'single_pass_processing_complete': 'complete'
           };
           
           let mappedStage = stageMapping[currentStage] || currentStage;
+          console.log('🎯 Backend→Frontend stage mapping:', currentStage, '→', mappedStage);
+          console.log('🎯 Final mapped stage:', mappedStage, 'Status:', stageStatus, 'Strategy:', actualStrategy);
           
-          // For single_pass strategy, map multi-stage events to simplified stages
-          if (processingStrategy === 'single_pass') {
-            const singlePassMapping = {
-              'parsing_file': 'generating_sql',
-              'generating_joins': 'generating_sql',
-              'generating_filters': 'generating_sql',
-              'generating_select': 'generating_sql',
-              'combining': 'generating_sql'
-            };
-            mappedStage = singlePassMapping[mappedStage] || mappedStage;
-          }
-          console.log('🎯 Mapped stage:', currentStage, '→', mappedStage, 'Status:', stageStatus, 'Strategy:', processingStrategy);
+          console.log('🏗️ CREATING PROGRESS MESSAGE:');
+          console.log('🏗️ - generationId:', generationId);
+          console.log('🏗️ - currentStage:', mappedStage);
+          console.log('🏗️ - actualStrategy:', actualStrategy);
+          console.log('🏗️ - sessionStrategy:', sessionStrategy);
           
           const progressMessage = {
             id: existingIndex >= 0 ? prev[existingIndex].id : `progress_${Date.now()}`,
@@ -617,9 +705,12 @@ ORDER BY total_spent DESC;
               columnTracking: data.data?.column_tracking,
               fieldTracking: data.data?.field_tracking,
               sessionId: sessionId,
-              processingStrategy: existingIndex >= 0 ? prev[existingIndex].metadata?.processingStrategy : processingStrategy
+              processingStrategy: actualStrategy
             }
           };
+          
+          console.log('🏗️ CREATED PROGRESS MESSAGE:', progressMessage);
+          console.log('🏗️ CREATED MESSAGE STRATEGY:', progressMessage.metadata.processingStrategy);
           
           if (existingIndex >= 0) {
             console.log('✏️ Updating existing progress message at index:', existingIndex);
@@ -1832,20 +1923,30 @@ ORDER BY total_spent DESC;
   );
 
   const renderProgressMessage = (message) => {
-    const { eventType, processingStatus, totalFields, currentStage, stageStatus, columnTracking, fieldTracking, processingStrategy } = message.metadata || {};
+    console.log('🎨 RENDER START - Full message:', message);
+    const { eventType, processingStatus, totalFields, currentStage, stageStatus, columnTracking, fieldTracking, processingStrategy: metadataStrategy } = message.metadata || {};
+    
+    console.log('🎨 RENDER - Rendering progress message with METADATA strategy:', metadataStrategy);
+    console.log('🎨 RENDER - Rendering progress message with COMPONENT strategy:', processingStrategy);
+    console.log('🎨 RENDER - Current stage:', currentStage, 'Status:', stageStatus);
+    console.log('🎨 RENDER - Full metadata:', message.metadata);
+    console.log('🎨 RENDER - Event type:', eventType);
     
     // Use currentStage from metadata
     const activeStage = currentStage;
     
     // Define progress stages based on processing strategy
     const getStagesForStrategy = (strategy) => {
+      console.log('🎯 getStagesForStrategy called with:', strategy);
       if (strategy === 'single_pass') {
+        console.log('🎯 Returning single_pass stages (3 stages)');
         return [
           { id: "analyzing", label: "Analyzing", number: 1 },
           { id: "generating_sql", label: "Generating SQL", number: 2 },
           { id: "complete", label: "Complete", number: 3 }
         ];
       } else {
+        console.log('🎯 Returning multi_pass stages (7 stages) for strategy:', strategy);
         // multi_pass or default
         return [
           { id: "analyzing", label: "Analyzing", number: 1 },
@@ -1859,8 +1960,11 @@ ORDER BY total_spent DESC;
       }
     };
     
-    const stages = getStagesForStrategy(processingStrategy);
-    console.log('🎯 Using stages for strategy:', processingStrategy, stages);
+    const stages = getStagesForStrategy(metadataStrategy); // Use METADATA strategy!
+    console.log('🎯 RENDER - Using stages for METADATA strategy:', metadataStrategy, '- Stages count:', stages.length);
+    console.log('🎯 RENDER - Component state strategy (IGNORED):', processingStrategy);
+    console.log('🎯 RENDER - Final strategy used for stages:', metadataStrategy);
+    console.log('🎯 RENDER - Generated stages:', stages.map(s => s.label));
     
     const getStageStatus = (stageId) => {
       const currentIndex = stages.findIndex(s => s.id === activeStage);
@@ -2076,7 +2180,33 @@ ORDER BY total_spent DESC;
     const { options, description, questionType } = message.metadata || {};
     
     const handleOptionSelect = async (selectedOption) => {
-      console.log('Selected option:', selectedOption);
+      console.log('🎯 Option selected:', selectedOption);
+      console.log('📝 Question metadata:', message.metadata);
+      console.log('🔢 Question ID:', message.metadata?.questionId);
+      console.log('📋 Question type:', message.metadata?.questionType);
+      console.log('📋 Question options:', message.metadata?.options);
+      
+      // Extract variables from metadata
+      const questionId = message.metadata?.questionId;
+      const questionType = message.metadata?.questionType;
+      const options = message.metadata?.options;
+      const sessionId = message.metadata?.sessionId;
+      
+      // Check if this is a strategy selection question
+      const isStrategyQuestion = questionType === 'strategy_selection' || 
+                                (selectedOption === 'single_pass' || selectedOption === 'multi_pass') ||
+                                (options && options.some(opt => 
+                                  (typeof opt === 'string' && (opt === 'single_pass' || opt === 'multi_pass')) ||
+                                  (typeof opt === 'object' && (opt.value === 'single_pass' || opt.value === 'multi_pass'))
+                                ));
+      
+      console.log('🔍 Is strategy question?', isStrategyQuestion);
+      console.log('🔍 questionType === strategy_selection:', questionType === 'strategy_selection');
+      console.log('🔍 selectedOption is strategy:', selectedOption === 'single_pass' || selectedOption === 'multi_pass');
+      console.log('🔍 options contain strategy:', options && options.some(opt => 
+        (typeof opt === 'string' && (opt === 'single_pass' || opt === 'multi_pass')) ||
+        (typeof opt === 'object' && (opt.value === 'single_pass' || opt.value === 'multi_pass'))
+      ));
       
       // Find the option object to get the label for display
       const optionObj = options.find(opt => 
@@ -2095,18 +2225,103 @@ ORDER BY total_spent DESC;
       setChatMessages(prev => [...prev, userResponse]);
       
       // Send selection back to backend with session ID
-      const { sessionId, questionId, questionType } = message.metadata;
+      // Variables already extracted above: sessionId, questionId, questionType
       
       // Store processing strategy for SSE stage customization
-      if (questionId === 3 && questionType === 'strategy_selection') {
-        console.log('💾 Storing processing strategy:', selectedOption);
+      // NOTE: Strategy question moved to be LAST question in backend
+      // Check for strategy selection by multiple criteria since backend may not set questionType
+      if (isStrategyQuestion) {
+        console.log('💾 Storing processing strategy (DETECTED STRATEGY QUESTION):', selectedOption);
+        console.log('💾 Question ID:', questionId, 'Type:', questionType);
+        console.log('💾 Strategy detected by:', {
+          questionType: questionType === 'strategy_selection',
+          selectedOptionIsStrategy: selectedOption === 'single_pass' || selectedOption === 'multi_pass',
+          optionsContainStrategy: options && options.some(opt => 
+            (typeof opt === 'string' && (opt === 'single_pass' || opt === 'multi_pass')) ||
+            (typeof opt === 'object' && (opt.value === 'single_pass' || opt.value === 'multi_pass'))
+          )
+        });
+        console.log('💾 Previous processingStrategy state:', processingStrategy);
+        console.log('💾 Previous sessionStrategy state:', sessionStrategy);
         setProcessingStrategy(selectedOption);
+        setSessionStrategy(selectedOption); // Also persist at session level
+        console.log('💾 setProcessingStrategy called with:', selectedOption);
+        console.log('💾 setSessionStrategy called with:', selectedOption);
+        
+        // Also log after a small delay to see if state updated
+        setTimeout(() => {
+          console.log('💾 Strategy state after 100ms:', processingStrategy);
+          console.log('💾 Session strategy state after 100ms:', sessionStrategy);
+        }, 100);
+        
+        // Log immediately to see current state
+        console.log('💾 Immediate check - processingStrategy:', processingStrategy);
+        console.log('💾 Immediate check - sessionStrategy:', sessionStrategy);
+        
+        // Since this is the LAST question, SSE should start immediately after
+        console.log('🚀 Strategy set on LAST question - SSE will start next');
+        
+        // Since strategy question is now LAST, start SSE immediately after strategy selection
+        console.log('🔥 Starting SSE for processing after STRATEGY SELECTION (last question)');
+        console.log('🎯 Strategy question answered:', selectedOption);
+        
+        // FORCE strategy update immediately when selected on last question
+        console.log('🔧 FORCING strategy state update to:', selectedOption);
+        setProcessingStrategy(selectedOption);
+        setSessionStrategy(selectedOption);
+        
+        // Get the processing strategy - use selectedOption directly since it was just selected
+        const currentProcessingStrategy = selectedOption; // Force use selectedOption since it was just chosen
+        console.log('🔍 FORCED processing strategy for SSE:', currentProcessingStrategy);
+        console.log('🔍 Session strategy (will be set):', selectedOption);
+        console.log('🔍 Component strategy (will be set):', selectedOption);
+        console.log('🔍 Selected option (direct):', selectedOption);
+        
+        // Create initial progress message WITH STRATEGY SET TO SELECTED OPTION
+        const initialProgressMessage = {
+          id: `progress_${Date.now()}`,
+          type: 'progress',
+          content: 'Starting data analysis...',
+          timestamp: new Date().toISOString(),
+          generationId: message.generationId,
+          metadata: {
+            eventType: 'analyzing',
+            currentStage: 'analyzing',
+            stageStatus: 'in_progress',
+            sessionId: sessionId,
+            processingStrategy: currentProcessingStrategy // This will be selectedOption directly
+          }
+        };
+        
+        console.log('🏗️ INITIAL PROGRESS MESSAGE CREATED:', initialProgressMessage);
+        console.log('🏗️ INITIAL MESSAGE STRATEGY:', initialProgressMessage.metadata.processingStrategy);
+        console.log('🏗️ INITIAL MESSAGE GENERATION ID:', initialProgressMessage.generationId);
+        
+        setChatMessages(prev => [...prev, initialProgressMessage]);
+        
+        // Start SSE connection immediately after strategy selection
+        console.log('🚀 About to start SSE connection after STRATEGY selection...');
+        console.log('🚀 Session ID:', sessionId);
+        console.log('🚀 Generation ID:', message.generationId);
+        console.log('🚀 Strategy for SSE:', currentProcessingStrategy || selectedOption);
+        startSSEConnection(sessionId, message.generationId);
+        console.log('🚀 SSE connection start call completed');
+        
+        // Small delay to ensure SSE connection is ready
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
       
-      // Start SSE connection immediately for third question to catch all events
-      if (questionId === 3) {
-        console.log('🔥 Starting SSE for processing before third question submission');
-        console.log('🎯 Selected strategy:', selectedOption);
+      // Legacy: Only start SSE connection after the 4th question is answered AND it's not a strategy question
+      if (questionId === 4 && !isStrategyQuestion) {
+        console.log('🔥 Starting SSE for processing after fourth question submission (LEGACY)');
+        console.log('🎯 Fourth question answered:', selectedOption);
+        console.log('🎯 NOT a strategy question, using legacy flow');
+        
+        // Get the processing strategy - it should be stored from question 3
+        const currentProcessingStrategy = sessionStrategy || processingStrategy;
+        console.log('🔍 Current processing strategy for SSE:', currentProcessingStrategy);
+        console.log('🔍 Session strategy:', sessionStrategy);
+        console.log('🔍 Component strategy:', processingStrategy);
         
         // Create initial progress message
         const initialProgressMessage = {
@@ -2120,13 +2335,13 @@ ORDER BY total_spent DESC;
             currentStage: 'analyzing',
             stageStatus: 'in_progress',
             sessionId: sessionId,
-            processingStrategy: selectedOption // Store strategy in progress message
+            processingStrategy: currentProcessingStrategy
           }
         };
         setChatMessages(prev => [...prev, initialProgressMessage]);
         
         // Start SSE connection and wait a bit for it to establish
-        console.log('🚀 About to start SSE connection...');
+        console.log('🚀 About to start SSE connection after 4th question...');
         console.log('🚀 Session ID:', sessionId);
         console.log('🚀 Generation ID:', message.generationId);
         startSSEConnection(sessionId, message.generationId);
@@ -2163,6 +2378,8 @@ ORDER BY total_spent DESC;
           // Handle the next question or completion response
           if (responseData.status === 'success' && responseData.next_question) {
             // Next question received
+            console.log('📋 Next question received:', responseData.next_question);
+            console.log('🔢 Next question ID:', responseData.next_question.question_id);
             setTimeout(() => {
               const nextQuestionMessage = {
                 id: `question_${Date.now()}`,
@@ -2179,10 +2396,13 @@ ORDER BY total_spent DESC;
                   description: responseData.next_question.description
                 }
               };
+              console.log('➕ Adding next question to chat:', nextQuestionMessage);
               setChatMessages(prev => [...prev, nextQuestionMessage]);
             }, 300);
           } else if (responseData.status === 'success' && responseData.question) {
             // Another question received (fallback for original structure)
+            console.log('📋 Fallback question received:', responseData.question);
+            console.log('🔢 Fallback question ID:', responseData.question.question_id);
             setTimeout(() => {
               const nextQuestionMessage = {
                 id: `question_${Date.now()}`,
@@ -2199,6 +2419,7 @@ ORDER BY total_spent DESC;
                   description: responseData.question.description
                 }
               };
+              console.log('➕ Adding fallback question to chat:', nextQuestionMessage);
               setChatMessages(prev => [...prev, nextQuestionMessage]);
             }, 300);
           } else if (responseData.status === 'success' && responseData.message) {
