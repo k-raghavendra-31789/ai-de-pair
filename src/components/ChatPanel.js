@@ -1624,7 +1624,10 @@ ORDER BY total_spent DESC;
       );
 
       if (excelAttachments.length > 0) {
-        console.log('🚀 Sending Excel data to backend...');
+        console.log('🚀 Sending Excel data to backend for NEW code generation...');
+        if (sqlGenerated) {
+          console.log('📝 Note: Existing code files will be preserved, new code will be generated separately');
+        }
         
         excelAttachments.forEach(async (attachment, index) => {
           try {
@@ -1634,6 +1637,7 @@ ORDER BY total_spent DESC;
             console.log(`📤 Sending Excel file ${index + 1}: ${attachment.name}`);
             console.log('📦 JSON Payload Length:', payload.length, 'characters');
             console.log('📋 JSON Content Preview:', payload.substring(0, 500) + '...');
+            console.log('🎯 Target: upload-excel-json endpoint (fresh generation, not modification)');
 
             const response = await fetch('http://localhost:8000/api/v1/data/upload-excel-json', {
               method: 'POST',
@@ -1651,6 +1655,19 @@ ORDER BY total_spent DESC;
               
               // Handle the backend response with question
               if (responseData.status === 'success' && responseData.question) {
+                // Update session tracking for new Excel upload
+                if (responseData.session_id) {
+                  console.log('📝 Updating session ID from Excel upload:', responseData.session_id);
+                  console.log('📝 Previous session ID:', currentSessionId);
+                  setCurrentSessionId(responseData.session_id);
+                  
+                  // Reset SQL generated flag for new generation process
+                  if (responseData.session_id !== currentSessionId) {
+                    console.log('🔄 New session detected - resetting generation flags');
+                    setSqlGenerated(false);
+                  }
+                }
+                
                 setTimeout(() => {
                   const questionMessage = {
                     id: `question_${Date.now()}`,
@@ -1704,10 +1721,12 @@ ORDER BY total_spent DESC;
       setChatMessages(prev => [...prev, userMessage]);
       
       // Check if SQL has been generated and send to single-pass endpoint
-      if (sqlGenerated && currentSessionId && chatInput.trim()) {
+      // BUT NOT if there are Excel attachments (which should trigger a fresh upload flow)
+      if (sqlGenerated && currentSessionId && chatInput.trim() && excelAttachments.length === 0) {
         console.log('🚀 SQL already generated, sending message to single-pass endpoint...');
         console.log('📋 Session ID:', currentSessionId);
         console.log('💬 Message:', chatInput.trim());
+        console.log('🔍 No Excel attachments - proceeding with single-pass flow');
         
         try {
           const response = await fetch(`http://localhost:8000/api/v1/data/session/${currentSessionId}/single-pass`, {
@@ -2009,6 +2028,13 @@ ORDER BY total_spent DESC;
           };
           setChatMessages(prev => [...prev, networkErrorMessage]);
         }
+      } else if (sqlGenerated && currentSessionId && chatInput.trim() && excelAttachments.length > 0) {
+        // Excel file attached with existing session - new upload will generate fresh code
+        console.log('📁 Excel file attached in existing session - skipping single-pass, using upload flow');
+        console.log('🔍 sqlGenerated:', sqlGenerated, ', sessionId:', currentSessionId);
+        console.log('🔍 Excel attachments:', excelAttachments.length);
+        console.log('✅ Upload process will generate new code while preserving existing files');
+        // Don't show any message - let the Excel upload process handle the flow
       } else if (excelAttachments.length > 0) {
         // Excel file is being uploaded - the upload process will handle the conversation flow
         console.log('📁 Excel file attached - upload process will handle conversation flow');
@@ -3337,7 +3363,7 @@ ORDER BY total_spent DESC;
             data-code-dropdown="true"
             className={`absolute z-50 ${colors.secondary} ${colors.border} border rounded-lg shadow-lg mt-1 min-w-[500px] max-h-[400px] overflow-hidden`}
             style={{
-              top: 'auto',
+              top: 'auto',                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
               bottom: '100%',
               left: '1rem',
               marginBottom: '0.5rem'
