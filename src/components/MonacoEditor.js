@@ -76,6 +76,8 @@ const MonacoEditor = ({
       'kt': 'kotlin',
       'swift': 'swift',
       'dart': 'dart',
+      'ipynb': 'json', // Jupyter Notebooks
+      'dbc': 'json', // Databricks Archives (often contain JSON)
       'txt': 'plaintext'
     };
     
@@ -243,6 +245,113 @@ const MonacoEditor = ({
           'editorCursor.foreground': '#d4d4d4',
           'editor.selectionBackground': '#264f78',
         }
+      });
+
+      // Enhanced Scala language support with Spark/Databricks keywords
+      monaco.languages.setLanguageConfiguration('scala', {
+        comments: {
+          lineComment: '//',
+          blockComment: ['/*', '*/']
+        },
+        brackets: [
+          ['{', '}'],
+          ['[', ']'],
+          ['(', ')']
+        ],
+        autoClosingPairs: [
+          { open: '{', close: '}' },
+          { open: '[', close: ']' },
+          { open: '(', close: ')' },
+          { open: '"', close: '"' },
+          { open: "'", close: "'" }
+        ],
+        surroundingPairs: [
+          { open: '{', close: '}' },
+          { open: '[', close: ']' },
+          { open: '(', close: ')' },
+          { open: '"', close: '"' },
+          { open: "'", close: "'" }
+        ]
+      });
+
+      // Enhanced Scala tokenizer with Spark/Databricks keywords
+      monaco.languages.setMonarchTokensProvider('scala', {
+        keywords: [
+          // Standard Scala keywords
+          'abstract', 'case', 'catch', 'class', 'def', 'do', 'else', 'extends',
+          'false', 'final', 'finally', 'for', 'forSome', 'if', 'implicit',
+          'import', 'lazy', 'match', 'new', 'null', 'object', 'override',
+          'package', 'private', 'protected', 'return', 'sealed', 'super',
+          'this', 'throw', 'trait', 'try', 'true', 'type', 'val', 'var',
+          'while', 'with', 'yield',
+          // Spark/Databricks specific keywords
+          'spark', 'sqlContext', 'sql', 'DataFrame', 'Dataset', 'RDD',
+          'SparkSession', 'SparkContext', 'SQLContext', 'HiveContext',
+          'createDataFrame', 'createTempView', 'createGlobalTempView',
+          'read', 'write', 'load', 'save', 'format', 'option', 'options',
+          'select', 'filter', 'where', 'groupBy', 'agg', 'join', 'union',
+          'unionAll', 'intersect', 'except', 'distinct', 'dropDuplicates',
+          'orderBy', 'sort', 'limit', 'collect', 'collectAsList', 'take',
+          'first', 'head', 'count', 'cache', 'persist', 'unpersist',
+          'repartition', 'coalesce', 'map', 'flatMap', 'reduceByKey',
+          'broadcast', 'accumulator', 'parallelize', 'textFile', 'wholeTextFiles',
+          'sequenceFile', 'saveAsTextFile', 'saveAsSequenceFile',
+          // Databricks specific
+          'dbutils', 'display', 'displayHTML', 'fs', 'notebook', 'widgets',
+          'secrets', 'library', 'delta', 'DeltaTable', 'optimize', 'vacuum',
+          'merge', 'when', 'whenMatched', 'whenNotMatched'
+        ],
+        typeKeywords: [
+          'Boolean', 'Byte', 'Char', 'Double', 'Float', 'Int', 'Long', 'Short',
+          'String', 'Unit', 'Any', 'AnyRef', 'AnyVal', 'Nothing', 'Null',
+          'Option', 'Some', 'None', 'List', 'Array', 'Map', 'Set', 'Seq',
+          'Vector', 'Buffer', 'Iterator', 'Future', 'Try', 'Either',
+          'DataFrame', 'Dataset', 'RDD', 'Row', 'Column', 'SparkSession'
+        ],
+        operators: [
+          '=', '>', '<', '!', '~', '?', ':', '==', '<=', '>=', '!=',
+          '&&', '||', '++', '--', '+', '-', '*', '/', '&', '|', '^', '%',
+          '<<', '>>', '>>>', '+=', '-=', '*=', '/=', '&=', '|=', '^=',
+          '%=', '<<=', '>>=', '>>>='
+        ],
+        symbols: /[=><!~?:&|+\-*/^%]+/,
+        escapes: /\\(?:[abfnrtv\\"']|x[0-9A-Fa-f]{1,4}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})/,
+        tokenizer: {
+          root: [
+            [/[a-z_$][\w$]*/, { cases: { '@typeKeywords': 'keyword', '@keywords': 'keyword', '@default': 'identifier' } }],
+            [/[A-Z][\w$]*/, 'type.identifier'],
+            { include: '@whitespace' },
+            [/[{}()[\]]/, '@brackets'],
+            [/[<>](?!@symbols)/, '@brackets'],
+            [/@symbols/, { cases: { '@operators': 'operator', '@default': '' } }],
+            [/\d*\.\d+([eE][+-]?\d+)?/, 'number.float'],
+            [/0[xX][0-9a-fA-F]+/, 'number.hex'],
+            [/\d+/, 'number'],
+            [/[;,.]/, 'delimiter'],
+            [/"([^"\\]|\\.)*$/, 'string.invalid'],
+            [/"/, { token: 'string.quote', bracket: '@open', next: '@string' }],
+            [/'[^\\']'/, 'string'],
+            [/(')(@escapes)(')/, ['string', 'string.escape', 'string']],
+            [/'/, 'string.invalid']
+          ],
+          comment: [
+            [/[^/*]+/, 'comment'],
+            [/\/\*/, 'comment', '@push'],
+            ["\\*/", 'comment', '@pop'],
+            [/[/*]/, 'comment']
+          ],
+          string: [
+            [/[^\\"]+/, 'string'],
+            [/@escapes/, 'string.escape'],
+            [/\\./, 'string.escape.invalid'],
+            [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }]
+          ],
+          whitespace: [
+            [/[ \t\r\n]+/, 'white'],
+            [/\/\*/, 'comment', '@comment'],
+            [/\/\/.*$/, 'comment'],
+          ],
+        },
       });
 
       // Create the editor

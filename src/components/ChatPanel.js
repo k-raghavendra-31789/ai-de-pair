@@ -50,6 +50,8 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   const [progressData, setProgressData] = useState(null);
   const [processingStrategy, setProcessingStrategy] = useState(null); // Store strategy selection
   const [sessionStrategy, setSessionStrategy] = useState(null); // Persist strategy for entire session
+  const [outputFormat, setOutputFormat] = useState(null); // Store user's preferred output format (SQL, PySpark, Spark, Pandas)
+  const [sessionOutputFormat, setSessionOutputFormat] = useState(null); // Persist output format for entire session
   
   const textareaRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -343,6 +345,7 @@ ORDER BY total_spent DESC;
           console.log('🔌 Received connection_closing event - closing SSE');
           if (eventSource.completionTimeoutId) {
             clearTimeout(eventSource.completionTimeoutId);
+            console.log('⏰ Cleared completion timeout on connection closing');
           }
           if (eventSource.debugInterval) {
             clearInterval(eventSource.debugInterval);
@@ -394,6 +397,17 @@ ORDER BY total_spent DESC;
           console.log('🎉 SQL extraction completed:', extractedSQL);
           console.log('🔄 Updating progress to complete and adding SQL result...');
           
+          // Clear the completion timeout since we received the actual completion event
+          if (eventSource.completionTimeoutId) {
+            clearTimeout(eventSource.completionTimeoutId);
+            console.log('⏰ Cleared completion timeout - received natural completion');
+          }
+          
+          // DEBUG: Log strategy values for file creation
+          console.log('🔍 STRATEGY DEBUG - sessionStrategy:', sessionStrategy);
+          console.log('🔍 STRATEGY DEBUG - processingStrategy:', processingStrategy);
+          console.log('🔍 STRATEGY DEBUG - data contains strategy?:', data.data?.processing_strategy || data.processing_strategy);
+          
           // Mark that SQL has been generated successfully
           setSqlGenerated(true);
           console.log('✅ SQL generation flag set to true');
@@ -423,20 +437,58 @@ ORDER BY total_spent DESC;
             return prev;
           });
           
-          // Create SQL file immediately and start streaming
-          console.log('➕ Creating in-memory SQL file and streaming to MainEditor');
+          // Create code file immediately and start streaming (strategy-aware)
+          // Get strategy from multiple sources including the completion event data
+          const eventStrategy = data.data?.processing_strategy || data.processing_strategy;
+          
+          // Also detect strategy from content if not explicitly provided
+          const isPySparkContent = extractedSQL && typeof extractedSQL === 'string' && (
+            extractedSQL.includes('pyspark') || 
+            extractedSQL.includes('spark.') ||
+            extractedSQL.includes('SparkSession') ||
+            extractedSQL.includes('from pyspark') ||
+            extractedSQL.includes('import pyspark') ||
+            extractedSQL.includes('.appName(') ||
+            extractedSQL.includes('.getOrCreate()') ||
+            extractedSQL.startsWith('# python') ||
+            extractedSQL.startsWith('"""python')
+          );
+          
+          let currentStrategy = eventStrategy || sessionStrategy || processingStrategy;
+          
+          // If no explicit strategy but content looks like PySpark, assume pyspark
+          if (!currentStrategy && isPySparkContent) {
+            currentStrategy = 'pyspark';
+            console.log('🎯 Detected PySpark strategy from content analysis');
+          }
+          
+          // Default to sql if still no strategy
+          currentStrategy = currentStrategy || 'sql';
+          
+          const isPySparkStrategy = currentStrategy === 'pyspark' || isPySparkContent;
+          const fileExtension = isPySparkStrategy ? 'py' : 'sql';
+          const fileType = isPySparkStrategy ? 'python' : 'sql';
+          const filePrefix = isPySparkStrategy ? 'pyspark' : 'sql';
+          
+          console.log('➕ Creating in-memory code file and streaming to MainEditor');
+          console.log('🔍 Strategy for file creation - eventStrategy:', eventStrategy);
+          console.log('🔍 Strategy for file creation - sessionStrategy:', sessionStrategy);
+          console.log('🔍 Strategy for file creation - processingStrategy:', processingStrategy);
+          console.log('🔍 Strategy for file creation - isPySparkContent:', isPySparkContent);
+          console.log('🔍 Strategy for file creation - FINAL currentStrategy:', currentStrategy);
+          console.log('🔍 File details - Extension:', fileExtension, '| Type:', fileType, '| Prefix:', filePrefix);
           
           // Create unique identifiers
           const timestamp = Date.now();
-          const memoryFileId = `sql_chat_${generationId}_${timestamp}`;
-          const fileName = `chat-generated-sql-${timestamp}.sql`;
+          const memoryFileId = `${filePrefix}_chat_${generationId}_${timestamp}`;
+          const fileName = `chat-generated-${filePrefix}-${timestamp}.${fileExtension}`;
           
           console.log('📄 Creating memory file with ID:', memoryFileId, 'name:', fileName);
-          console.log('📝 SQL content length:', extractedSQL.length);
-          console.log('📝 SQL content preview:', extractedSQL.substring(0, 100) + '...');
+          console.log('📝 Code content length:', extractedSQL.length);
+          console.log('📝 Code content preview:', extractedSQL.substring(0, 100) + '...');
           
           // Create in-memory file placeholder (no initial version - streaming will create the version)
-          addMemoryFilePlaceholder(memoryFileId, fileName, 'sql', false);
+          addMemoryFilePlaceholder(memoryFileId, fileName, fileType, false);
           console.log('✅ Empty memory file created, starting stream...');
           
           // Create new tab for the SQL file
@@ -492,13 +544,53 @@ ORDER BY total_spent DESC;
             setSqlGenerated(true);
             console.log('✅ SQL generation flag set to true (alternative path)');
             
-            // Use the found SQL and create the file with streaming
+            // Use the found code and create the file with streaming (strategy-aware)
+            const eventStrategy = data.data?.processing_strategy || data.processing_strategy;
+            
+            // Also detect strategy from content if not explicitly provided
+            const isPySparkContent = possibleSQL && typeof possibleSQL === 'string' && (
+              possibleSQL.includes('pyspark') || 
+              possibleSQL.includes('spark.') ||
+              possibleSQL.includes('SparkSession') ||
+              possibleSQL.includes('from pyspark') ||
+              possibleSQL.includes('import pyspark') ||
+              possibleSQL.includes('.appName(') ||
+              possibleSQL.includes('.getOrCreate()') ||
+              possibleSQL.startsWith('# python') ||
+              possibleSQL.startsWith('"""python')
+            );
+            
+            let currentStrategy = eventStrategy || sessionStrategy || processingStrategy;
+            
+            // If no explicit strategy but content looks like PySpark, assume pyspark
+            if (!currentStrategy && isPySparkContent) {
+              currentStrategy = 'pyspark';
+              console.log('🎯 ALTERNATIVE PATH - Detected PySpark strategy from content analysis');
+            }
+            
+            // Default to sql if still no strategy
+            currentStrategy = currentStrategy || 'sql';
+            
+            const isPySparkStrategy = currentStrategy === 'pyspark' || isPySparkContent;
+            const fileExtension = isPySparkStrategy ? 'py' : 'sql';
+            const fileType = isPySparkStrategy ? 'python' : 'sql';
+            const filePrefix = isPySparkStrategy ? 'pyspark' : 'sql';
+            
+            console.log('📄 ALTERNATIVE PATH - Strategy detection:');
+            console.log('📄 - eventStrategy:', eventStrategy);
+            console.log('📄 - sessionStrategy:', sessionStrategy);
+            console.log('📄 - processingStrategy:', processingStrategy);
+            console.log('📄 - isPySparkContent:', isPySparkContent);
+            console.log('📄 - FINAL currentStrategy:', currentStrategy);
+            
             const timestamp = Date.now();
-            const memoryFileId = `sql_chat_${generationId}_${timestamp}`;
-            const fileName = `chat-generated-sql-${timestamp}.sql`;
+            const memoryFileId = `${filePrefix}_chat_${generationId}_${timestamp}`;
+            const fileName = `chat-generated-${filePrefix}-${timestamp}.${fileExtension}`;
+            
+            console.log('📄 Creating strategy-aware file:', fileName, '| Strategy:', currentStrategy, '| Type:', fileType);
             
             // Create placeholder memory file for streaming
-            addMemoryFilePlaceholder(memoryFileId, fileName, 'sql', false);
+            addMemoryFilePlaceholder(memoryFileId, fileName, fileType, false);
             
             const newTab = {
               id: `tab_${timestamp}`,
@@ -627,17 +719,32 @@ ORDER BY total_spent DESC;
             console.log('🔧 Fallback strategy detection result:', currentStrategy);
           }
           
+          // Additional fallback: if we still don't have strategy but see specific events, detect strategy
+          // Also check the message content for PySpark indicators
+          const messageIndicatesPySpark = data.message && typeof data.message === 'string' && (
+            data.message.includes('PySpark') || 
+            data.message.includes('pyspark') ||
+            data.message.includes('Python code') ||
+            data.message.includes('python code')
+          );
+          
           console.log('🔍 Strategy detection - sessionStrategy (ABSOLUTE PRIORITY):', sessionStrategy);
           console.log('🔍 Strategy detection - processingStrategy state:', processingStrategy);
           console.log('🔍 Strategy detection - data.data.processing_strategy:', data.data?.processing_strategy);
           console.log('🔍 Strategy detection - data.processing_strategy:', data.processing_strategy);
           console.log('🔍 Strategy detection - existing message strategy:', existingIndex >= 0 ? prev[existingIndex].metadata?.processingStrategy : 'no existing message');
           console.log('🔍 Strategy detection - event name for detection:', currentStage);
+          console.log('🔍 Strategy detection - message content:', data.message);
+          console.log('🔍 Strategy detection - messageIndicatesPySpark:', messageIndicatesPySpark);
           console.log('🔍 Strategy detection - final currentStrategy:', currentStrategy);
           
-          // Additional fallback: if we still don't have strategy but see single_pass events, force it
           const finalStrategy = currentStrategy || 
-                               (currentStage?.includes('single_pass') || 
+                               (currentStage?.includes('pyspark') || 
+                                data.event_type?.includes('pyspark') ||
+                                currentStage?.includes('python') ||
+                                data.event_type?.includes('python') ||
+                                messageIndicatesPySpark ? 'pyspark' :
+                                currentStage?.includes('single_pass') || 
                                 currentStage?.includes('analysis_') || 
                                 currentStage === 'questions_complete' ||
                                 data.event_type?.includes('single_pass') ||
@@ -652,9 +759,9 @@ ORDER BY total_spent DESC;
           console.log('🔍 Strategy detection - sessionStrategy state:', sessionStrategy);
           
           // Don't overwrite session strategy if it's already set
-          if (actualStrategy === 'single_pass' && !sessionStrategy) {
-            console.log('💾 Persisting single_pass strategy for entire session');
-            setSessionStrategy('single_pass');
+          if ((actualStrategy === 'single_pass' || actualStrategy === 'pyspark') && !sessionStrategy) {
+            console.log('💾 Persisting strategy for entire session:', actualStrategy);
+            setSessionStrategy(actualStrategy);
           }
           
           // Map backend stage names to frontend stage names
@@ -676,10 +783,34 @@ ORDER BY total_spent DESC;
             'analyzing_complete': 'analyzing',
             'generating_sql': 'generating_sql',
             'generating_sql_complete': 'generating_sql',
-            'single_pass_processing_complete': 'complete'
+            'single_pass_processing_complete': 'complete',
+            
+            // PySpark-specific events → frontend stages
+            'pyspark_analysis_starting': 'analyzing',
+            'pyspark_analysis_complete': 'analyzing',
+            'pyspark_processing_start': 'generating_code',
+            'generating_pyspark': 'generating_code',
+            'generating_python': 'generating_code',
+            'pyspark_processing_complete': 'complete',
+            'python_processing_complete': 'complete'
           };
           
           let mappedStage = stageMapping[currentStage] || currentStage;
+          
+          // Post-process stage mapping based on strategy context
+          // If strategy is pyspark, convert SQL generation stages to code generation stages
+          if (actualStrategy === 'pyspark') {
+            if (mappedStage === 'generating_sql') {
+              mappedStage = 'generating_code';
+              console.log('🔧 Converting SQL stage to code stage for PySpark strategy');
+            }
+            // Also handle any backend events that might not be PySpark-specific
+            if (currentStage === 'single_pass_processing_start' || currentStage === 'generating_sql') {
+              mappedStage = 'generating_code';
+              console.log('🔧 Converting generic processing stage to code generation for PySpark');
+            }
+          }
+          
           console.log('🎯 Backend→Frontend stage mapping:', currentStage, '→', mappedStage);
           console.log('🎯 Final mapped stage:', mappedStage, 'Status:', stageStatus, 'Strategy:', actualStrategy);
           
@@ -766,7 +897,8 @@ ORDER BY total_spent DESC;
     
     // Also add a safety timeout to handle cases where completion event might be missed
     const completionTimeoutId = setTimeout(() => {
-      console.log('⏰ Completion timeout reached - checking for completion...');
+      console.log('⏰ TIMEOUT TRIGGERED: 30-second safety timeout reached');
+      console.log('⏰ This indicates natural completion events may have been missed');
       
       // Check if there were any code messages generated for this generation
       setChatMessages(prev => {
@@ -775,7 +907,7 @@ ORDER BY total_spent DESC;
         );
         
         if (hasCodeMessage) {
-          console.log('✅ Found code message, assuming completion is handled');
+          console.log('✅ TIMEOUT: Found code message, assuming completion is handled naturally');
           return prev;
         }
         
@@ -785,7 +917,9 @@ ORDER BY total_spent DESC;
         );
         
         if (progressIndex >= 0 && prev[progressIndex].metadata?.currentStage !== 'complete') {
-          console.log('⚠️ Progress still showing, forcing completion...');
+          console.log('⚠️ TIMEOUT: Progress still showing, forcing completion...');
+          console.log('⚠️ TIMEOUT: Current stage was:', prev[progressIndex].metadata?.currentStage);
+          console.log('⚠️ TIMEOUT: This should be rare if backend events are working properly');
           const completedProgressMessage = {
             ...prev[progressIndex],
             metadata: {
@@ -797,6 +931,8 @@ ORDER BY total_spent DESC;
           const newMessages = [...prev];
           newMessages[progressIndex] = completedProgressMessage;
           return newMessages;
+        } else {
+          console.log('✅ TIMEOUT: Progress already complete or not found, no action needed');
         }
         
         return prev;
@@ -1328,6 +1464,76 @@ ORDER BY total_spent DESC;
     }
   };
 
+  // ✅ MODULAR HELPER FUNCTIONS FOR OUTPUT FORMAT HANDLING
+  
+  // Helper function to get file configuration based on output format
+  const getFileConfigForFormat = (format) => {
+    const normalizedFormat = format?.toLowerCase();
+    console.log('🔧 Getting file config for format:', format, '→', normalizedFormat);
+    
+    switch (normalizedFormat) {
+      case 'pyspark':
+        return {
+          extension: 'py',
+          type: 'python',
+          prefix: 'pyspark',
+          displayName: 'PySpark',
+          streamingMessage: 'Streaming PySpark code',
+          completionMessage: 'AI-generated PySpark code',
+          fileDescription: 'PySpark code file'
+        };
+      case 'spark':
+        return {
+          extension: 'scala',
+          type: 'scala',
+          prefix: 'spark',
+          displayName: 'Spark',
+          streamingMessage: 'Streaming Spark code',
+          completionMessage: 'AI-generated Spark code',
+          fileDescription: 'Spark code file'
+        };
+      case 'pandas':
+        return {
+          extension: 'py',
+          type: 'python',
+          prefix: 'pandas',
+          displayName: 'Pandas',
+          streamingMessage: 'Streaming Pandas code',
+          completionMessage: 'AI-generated Pandas code',
+          fileDescription: 'Pandas code file'
+        };
+      case 'sql':
+      default:
+        return {
+          extension: 'sql',
+          type: 'sql',
+          prefix: 'sql',
+          displayName: 'SQL',
+          streamingMessage: 'Streaming SQL code',
+          completionMessage: 'AI-generated SQL code',
+          fileDescription: 'SQL file'
+        };
+    }
+  };
+
+  // Helper function to get format indicators for file searching
+  const getFormatIndicators = (format) => {
+    const normalizedFormat = format?.toLowerCase();
+    console.log('🔍 Getting format indicators for:', format, '→', normalizedFormat);
+    
+    switch (normalizedFormat) {
+      case 'pyspark':
+        return ['pyspark', '.py'];
+      case 'spark':
+        return ['spark', '.scala'];
+      case 'pandas':
+        return ['pandas', '.py'];
+      case 'sql':
+      default:
+        return ['sql', '.sql'];
+    }
+  };
+
   const handleSendMessage = async () => {
     if (chatInput.trim() || selectedMentions.length > 0) {
       // Generate unique generation ID
@@ -1524,22 +1730,22 @@ ORDER BY total_spent DESC;
             if (responseData.status === 'success') {
               console.log('✅ Single-pass request processed successfully');
               
-              // Check if we received updated SQL content
-              if (responseData.message && responseData.mode === 'sql_modification') {
-                console.log('🔄 Received updated SQL from backend:', responseData.message);
+              // Check if we received updated code content (SQL/PySpark/Spark/Pandas)
+              if (responseData.message && (responseData.mode === 'sql_modification' || responseData.mode === 'code_modification')) {
+                console.log('🔄 Received updated code from backend:', responseData.message);
                 console.log('📊 Current memory files:', Object.keys(memoryFiles));
                 console.log('📊 Memory files details:', Object.entries(memoryFiles).map(([id, file]) => ({
                   id, 
                   name: file.name, 
                   type: file.type,
                   hasContent: !!file.content,
-                  isSQL: file.name?.includes('sql')
+                  isCodeFile: file.name?.includes('sql') || file.name?.includes('py') || file.name?.includes('scala')
                 })));
-                console.log('🎯 Current SQL generation ID:', sqlGeneration?.generationId);
+                console.log('🎯 Current generation ID:', sqlGeneration?.generationId);
                 console.log('🎯 Active generation ID:', activeGenerationId);
                 
-                // Find the SQL memory file to update
-                // First priority: find file related to current SQL generation or active generation
+                // Find the code memory file to update
+                // First priority: find file related to current generation or active generation
                 let targetFileId = null;
                 let targetFile = null;
                 
@@ -1555,70 +1761,81 @@ ORDER BY total_spent DESC;
                   });
                   
                   // Look for a file with the current generation ID in its name or ID
-                  // Priority 1: Look for the exact pattern used by MainEditor
-                  const exactPattern = `sql_gen_${effectiveGenerationId}`;
-                  console.log('🔍 Looking for exact pattern:', exactPattern);
+                  // Priority 1: Look for the exact pattern used by MainEditor (format-aware)
+                  const effectiveOutputFormat = sessionOutputFormat || outputFormat || sessionStrategy || processingStrategy || 'SQL';
+                  const fileConfig = getFileConfigForFormat(effectiveOutputFormat);
+                  const exactPattern = `${fileConfig.prefix}_gen_${effectiveGenerationId}`;
+                  console.log('🔍 Looking for exact pattern:', exactPattern, 'for format:', effectiveOutputFormat);
                   
                   const exactGenerationFiles = Object.entries(memoryFiles).filter(([fileId, file]) => 
-                    fileId === exactPattern && file.name && file.name.includes('sql')
+                    fileId === exactPattern && file.name && file.name.includes(fileConfig.extension)
                   );
                   
                   if (exactGenerationFiles.length > 0) {
                     [targetFileId, targetFile] = exactGenerationFiles[0];
-                    console.log('🎯 Found SQL file by exact generation ID pattern:', targetFile.name);
+                    console.log('🎯 Found code file by exact generation ID pattern:', targetFile.name);
                   } else {
                     console.log('⚠️ No exact pattern match found, trying broader search...');
                     
                     // Priority 2: Look for files containing the generation ID
+                    // ✅ MODULAR: Look for files by current output format, not just SQL
+                    const formatIndicators = getFormatIndicators(effectiveOutputFormat);
+                    console.log('🔍 Searching for files with format indicators:', formatIndicators, 'for format:', effectiveOutputFormat);
+                    
                     const generationBasedFiles = Object.entries(memoryFiles).filter(([fileId, file]) => 
                       file.name && (
                         file.name.includes(effectiveGenerationId) ||
                         fileId.includes(effectiveGenerationId)
-                      ) && file.name.includes('sql') && file.content
+                      ) && formatIndicators.some(indicator => file.name.includes(indicator)) && file.content
                     );
                     
                     if (generationBasedFiles.length > 0) {
                       [targetFileId, targetFile] = generationBasedFiles[0];
-                      console.log('🎯 Found SQL file by generation ID pattern:', targetFile.name);
+                      console.log('🎯 Found code file by generation ID pattern:', targetFile.name);
                     } else {
                       console.log('⚠️ No generation-based files found either');
                     }
                   }
                 }
                 
-                // Fallback: find the most recent SQL memory file
+                // Fallback: find the most recent code memory file matching current output format
                 if (!targetFileId) {
-                  console.log('🔍 Fallback: searching for any SQL memory files...');
+                  const effectiveOutputFormat = sessionOutputFormat || outputFormat || sessionStrategy || processingStrategy || 'SQL';
+                  const formatIndicators = getFormatIndicators(effectiveOutputFormat);
+                  console.log('🔍 Fallback: searching for any code memory files with format indicators:', formatIndicators);
                   
-                  const sqlMemoryFiles = Object.entries(memoryFiles).filter(([fileId, file]) => {
-                    const hasSQL = file.name && file.name.includes('sql');
+                  const codeMemoryFiles = Object.entries(memoryFiles).filter(([fileId, file]) => {
+                    const hasFormatIndicator = formatIndicators.some(indicator => file.name && file.name.includes(indicator));
                     const hasContent = file.content || (file.versions && file.versions.length > 0);
-                    console.log(`📁 Checking file ${fileId}: name=${file.name}, hasSQL=${hasSQL}, hasContent=${hasContent}, structure:`, {
+                    console.log(`📁 Checking file ${fileId}: name=${file.name}, hasFormatIndicator=${hasFormatIndicator}, hasContent=${hasContent}, structure:`, {
                       hasDirectContent: !!file.content,
                       hasVersions: !!(file.versions && file.versions.length > 0),
                       versionsCount: file.versions?.length || 0
                     });
-                    return hasSQL && hasContent;
+                    return hasFormatIndicator && hasContent;
                   });
                   
-                  console.log('📁 Found SQL memory files:', sqlMemoryFiles.map(([id, file]) => ({id, name: file.name})));
+                  console.log('📁 Found code memory files:', codeMemoryFiles.map(([id, file]) => ({id, name: file.name})));
                   
-                  if (sqlMemoryFiles.length > 0) {
-                    // Get the most recent SQL file (assuming they're sorted by creation time)
-                    [targetFileId, targetFile] = sqlMemoryFiles[sqlMemoryFiles.length - 1];
-                    console.log('📝 Using most recent SQL file:', targetFile.name);
+                  if (codeMemoryFiles.length > 0) {
+                    // Get the most recent code file (assuming they're sorted by creation time)
+                    [targetFileId, targetFile] = codeMemoryFiles[codeMemoryFiles.length - 1];
+                    console.log('📝 Using most recent code file:', targetFile.name);
                   }
                 }
                 
                 if (targetFileId && targetFile) {
-                  console.log('📝 Streaming updated SQL to file:', targetFile.name, 'with ID:', targetFileId);
-                  console.log('📄 Old SQL content length:', targetFile.content?.length || 0);
-                  console.log('📄 New SQL content length:', responseData.message.length);
+                  // ✅ MODULAR: Get file config for proper messaging
+                  const effectiveOutputFormat = sessionOutputFormat || outputFormat || sessionStrategy || processingStrategy || 'SQL';
+                  const fileConfig = getFileConfigForFormat(effectiveOutputFormat);
+                  console.log(`📝 Streaming updated ${fileConfig.displayName} to file:`, targetFile.name, 'with ID:', targetFileId);
+                  console.log(`📄 Old ${fileConfig.displayName} content length:`, targetFile.content?.length || 0);
+                  console.log(`📄 New ${fileConfig.displayName} content length:`, responseData.message.length);
                   console.log('📊 Memory files before update:', Object.keys(memoryFiles));
                   
-                  // Start streaming the updated SQL content
+                  // Start streaming the updated content
                   startMemoryFileStreaming(targetFileId);
-                  console.log('🌊 Started streaming for SQL update');
+                  console.log(`🌊 Started streaming for ${fileConfig.displayName} update`);
                   
                   // Simulate streaming by breaking the content into chunks
                   const content = responseData.message;
@@ -1633,13 +1850,13 @@ ORDER BY total_spent DESC;
                   let chunkIndex = 0;
                   const streamInterval = setInterval(() => {
                     if (chunkIndex < chunks.length) {
-                      updateMemoryFile(targetFileId, chunks[chunkIndex], false, '🔄 Streaming SQL update');
+                      updateMemoryFile(targetFileId, chunks[chunkIndex], false, `🔄 ${fileConfig.streamingMessage}`);
                       chunkIndex++;
                     } else {
                       // Finish streaming
                       clearInterval(streamInterval);
-                      endMemoryFileStreaming(targetFileId, content, '🔄 AI-generated SQL update');
-                      console.log('✅ SQL update streaming completed');
+                      endMemoryFileStreaming(targetFileId, content, `🔄 ${fileConfig.completionMessage}`);
+                      console.log(`✅ ${fileConfig.displayName} update streaming completed`);
                     }
                   }, 50); // 50ms delay between chunks
                   
@@ -1647,7 +1864,7 @@ ORDER BY total_spent DESC;
                   const confirmationMessage = {
                     id: `confirm_${Date.now()}`,
                     type: 'ai',
-                    content: `Updated SQL in ${targetFile.name}`,
+                    content: `Updated ${fileConfig.displayName} in ${targetFile.name}`,
                     timestamp: new Date().toISOString(),
                     generationId,
                     metadata: {
@@ -1655,26 +1872,34 @@ ORDER BY total_spent DESC;
                       provider: responseData.provider,
                       model: responseData.model,
                       updatedFile: targetFile.name,
+                      outputFormat: effectiveOutputFormat,
                       sessionId: responseData.session_id
                     }
                   };
                   setChatMessages(prev => [...prev, confirmationMessage]);
                   
-                  console.log('✅ SQL file updated and confirmation message added');
+                  console.log(`✅ ${fileConfig.displayName} file updated and confirmation message added`);
                 } else {
-                  console.log('⚠️ No SQL memory files found to update - creating new file with streaming');
+                  console.log('⚠️ No existing code memory files found to update - creating new file with streaming');
                   
-                  // Create a new SQL file with the updated content using streaming
+                  // ✅ MODULAR OUTPUT FORMAT DETECTION - Use session output format as primary source
+                  const effectiveOutputFormat = sessionOutputFormat || outputFormat || sessionStrategy || processingStrategy || 'SQL';
+                  console.log('🎯 Detected effective output format for new file creation:', effectiveOutputFormat);
+                  console.log('🎯 Format hierarchy: sessionOutputFormat=', sessionOutputFormat, ', outputFormat=', outputFormat, ', sessionStrategy=', sessionStrategy, ', processingStrategy=', processingStrategy);
+                  
+                  const fileConfig = getFileConfigForFormat(effectiveOutputFormat);
+                  console.log('📝 File configuration:', fileConfig);
+                  
                   const timestamp = Date.now();
-                  const memoryFileId = `sql_updated_${timestamp}`;
-                  const fileName = `updated-sql-${timestamp}.sql`;
+                  const memoryFileId = `${fileConfig.prefix}_updated_${timestamp}`;
+                  const fileName = `updated-${fileConfig.prefix}-${timestamp}.${fileConfig.extension}`;
                   
-                  console.log('📝 Creating new SQL file with streaming:', fileName, 'with ID:', memoryFileId);
+                  console.log(`📝 Creating new ${fileConfig.displayName} file with streaming:`, fileName, 'with ID:', memoryFileId, '| Format:', effectiveOutputFormat);
                   
                   // Create empty memory file and start streaming
-                  addMemoryFile(memoryFileId, fileName, 'sql', '');
+                  addMemoryFile(memoryFileId, fileName, fileConfig.type, '');
                   startMemoryFileStreaming(memoryFileId);
-                  console.log('🌊 Started streaming for new SQL file');
+                  console.log(`🌊 Started streaming for new ${fileConfig.displayName} file`);
                   
                   // Simulate streaming by breaking the content into chunks
                   const content = responseData.message;
@@ -1689,17 +1914,17 @@ ORDER BY total_spent DESC;
                   let chunkIndex = 0;
                   const streamInterval = setInterval(() => {
                     if (chunkIndex < chunks.length) {
-                      updateMemoryFile(memoryFileId, chunks[chunkIndex], false, '🔄 Streaming new SQL');
+                      updateMemoryFile(memoryFileId, chunks[chunkIndex], false, `🔄 ${fileConfig.streamingMessage}`);
                       chunkIndex++;
                     } else {
                       // Finish streaming
                       clearInterval(streamInterval);
-                      endMemoryFileStreaming(memoryFileId, content, '🔄 AI-generated SQL update');
-                      console.log('✅ New SQL file streaming completed');
+                      endMemoryFileStreaming(memoryFileId, content, `🔄 ${fileConfig.completionMessage}`);
+                      console.log(`✅ New ${fileConfig.displayName} file streaming completed`);
                     }
                   }, 50); // 50ms delay between chunks
                   
-                  // Create new tab for the updated SQL file
+                  // Create new tab for the updated code file
                   const newTab = {
                     id: `tab_${timestamp}`,
                     name: fileName,
@@ -1713,7 +1938,8 @@ ORDER BY total_spent DESC;
                       mode: responseData.mode,
                       provider: responseData.provider,
                       model: responseData.model,
-                      sessionId: responseData.session_id
+                      sessionId: responseData.session_id,
+                      outputFormat: effectiveOutputFormat
                     }
                   };
                   
@@ -1723,7 +1949,7 @@ ORDER BY total_spent DESC;
                   const newFileMessage = {
                     id: `new_file_${Date.now()}`,
                     type: 'ai',
-                    content: `Created new SQL file: ${fileName}`,
+                    content: `Created new ${fileConfig.displayName} file: ${fileName}`,
                     timestamp: new Date().toISOString(),
                     generationId,
                     metadata: {
@@ -1731,12 +1957,13 @@ ORDER BY total_spent DESC;
                       provider: responseData.provider,
                       model: responseData.model,
                       newFile: fileName,
+                      outputFormat: effectiveOutputFormat,
                       sessionId: responseData.session_id
                     }
                   };
                   setChatMessages(prev => [...prev, newFileMessage]);
                   
-                  console.log('✅ New SQL file created with updated content');
+                  console.log(`✅ New ${fileConfig.displayName} file created with updated content`);
                 }
               } else if (responseData.message) {
                 // If it's not SQL modification, show the message as an AI response
@@ -1782,6 +2009,27 @@ ORDER BY total_spent DESC;
           };
           setChatMessages(prev => [...prev, networkErrorMessage]);
         }
+      } else if (excelAttachments.length > 0) {
+        // Excel file is being uploaded - the upload process will handle the conversation flow
+        console.log('📁 Excel file attached - upload process will handle conversation flow');
+        console.log('🔍 Excel attachments:', excelAttachments.length);
+        // Don't show any error message - let the Excel upload process continue
+      } else {
+        // Only show help message if no Excel attachments are present
+        console.log('⚠️ No Excel file attached and no active session');
+        console.log('🔍 Current state: sqlGenerated =', sqlGenerated, ', currentSessionId =', currentSessionId);
+        console.log('🔍 Selected mentions:', selectedMentions.length);
+        console.log('🔍 Excel attachments:', excelAttachments.length);
+        
+        // Show helpful message explaining the workflow
+        const helpMessage = {
+          id: `help_${Date.now()}`,
+          type: 'ai',
+          content: 'Please upload an Excel file first to start analyzing your data. Click the Excel icon above to upload your file, then ask questions about your data.',
+          timestamp: new Date().toISOString(),
+          generationId
+        };
+        setChatMessages(prev => [...prev, helpMessage]);
       }
       
       // Clear input and mentions
@@ -1935,19 +2183,59 @@ ORDER BY total_spent DESC;
     // Use currentStage from metadata
     const activeStage = currentStage;
     
-    // Define progress stages based on processing strategy
-    const getStagesForStrategy = (strategy) => {
-      console.log('🎯 getStagesForStrategy called with:', strategy);
-      if (strategy === 'single_pass') {
-        console.log('🎯 Returning single_pass stages (3 stages)');
+    // Define progress stages based on output format preference
+    const getStagesForStrategy = (outputFormat) => {
+      console.log('🎯 getStagesForStrategy called with output format:', outputFormat);
+      
+      // Normalize the format for comparison
+      const normalizedFormat = outputFormat?.toLowerCase();
+      
+      // Handle different output formats
+      if (normalizedFormat === 'sql') {
+        console.log('🎯 Returning SQL stages (3 stages)');
         return [
           { id: "analyzing", label: "Analyzing", number: 1 },
           { id: "generating_sql", label: "Generating SQL", number: 2 },
           { id: "complete", label: "Complete", number: 3 }
         ];
-      } else {
-        console.log('🎯 Returning multi_pass stages (7 stages) for strategy:', strategy);
-        // multi_pass or default
+      } else if (normalizedFormat === 'pyspark') {
+        console.log('🎯 Returning PySpark stages (3 stages)');
+        return [
+          { id: "analyzing", label: "Analyzing", number: 1 },
+          { id: "generating_code", label: "Generating PySpark Code", number: 2 },
+          { id: "complete", label: "Complete", number: 3 }
+        ];
+      } else if (normalizedFormat === 'spark') {
+        console.log('🎯 Returning Spark stages (3 stages)');
+        return [
+          { id: "analyzing", label: "Analyzing", number: 1 },
+          { id: "generating_code", label: "Generating Spark Code", number: 2 },
+          { id: "complete", label: "Complete", number: 3 }
+        ];
+      } else if (normalizedFormat === 'pandas') {
+        console.log('🎯 Returning Pandas stages (3 stages)');
+        return [
+          { id: "analyzing", label: "Analyzing", number: 1 },
+          { id: "generating_code", label: "Generating Pandas Code", number: 2 },
+          { id: "complete", label: "Complete", number: 3 }
+        ];
+      } else if (normalizedFormat === 'single_pass') {
+        // Legacy support for processing strategy - try to detect output format from session state
+        const effectiveOutputFormat = sessionOutputFormat || outputFormat;
+        if (effectiveOutputFormat && effectiveOutputFormat.toLowerCase() !== 'single_pass') {
+          console.log('🎯 Single_pass detected, but using effective output format:', effectiveOutputFormat);
+          // Recursively call with the effective output format
+          return getStagesForStrategy(effectiveOutputFormat);
+        } else {
+          console.log('🎯 Returning single_pass stages (3 stages) - legacy support with SQL default');
+          return [
+            { id: "analyzing", label: "Analyzing", number: 1 },
+            { id: "generating_sql", label: "Generating SQL", number: 2 },
+            { id: "complete", label: "Complete", number: 3 }
+          ];
+        }
+      } else if (normalizedFormat === 'multi_pass') {
+        console.log('🎯 Returning multi_pass stages (7 stages)');
         return [
           { id: "analyzing", label: "Analyzing", number: 1 },
           { id: "parsing_file", label: "Parsing file", number: 2 },
@@ -1957,13 +2245,33 @@ ORDER BY total_spent DESC;
           { id: "combining", label: "Combining", number: 6 },
           { id: "complete", label: "Complete", number: 7 }
         ];
+      } else {
+        // Unknown format - try to determine from context or default to SQL
+        console.log('🎯 Unknown format:', outputFormat, '- trying to determine from session context');
+        const effectiveOutputFormat = sessionOutputFormat || 'SQL';
+        if (effectiveOutputFormat && effectiveOutputFormat.toLowerCase() !== normalizedFormat) {
+          console.log('🎯 Using session output format:', effectiveOutputFormat);
+          return getStagesForStrategy(effectiveOutputFormat);
+        } else {
+          console.log('🎯 Defaulting to SQL stages (3 stages) for unknown format:', outputFormat);
+          return [
+            { id: "analyzing", label: "Analyzing", number: 1 },
+            { id: "generating_sql", label: "Generating SQL", number: 2 },
+            { id: "complete", label: "Complete", number: 3 }
+          ];
+        }
       }
     };
     
-    const stages = getStagesForStrategy(metadataStrategy); // Use METADATA strategy!
-    console.log('🎯 RENDER - Using stages for METADATA strategy:', metadataStrategy, '- Stages count:', stages.length);
-    console.log('🎯 RENDER - Component state strategy (IGNORED):', processingStrategy);
-    console.log('🎯 RENDER - Final strategy used for stages:', metadataStrategy);
+    // Use output format for determining progress stages, fallback to processing strategy for legacy support
+    const currentOutputFormat = sessionOutputFormat || outputFormat || metadataStrategy;
+    const stages = getStagesForStrategy(currentOutputFormat);
+    console.log('🎯 RENDER - Using stages for OUTPUT FORMAT:', currentOutputFormat, '- Stages count:', stages.length);
+    console.log('🎯 RENDER - sessionOutputFormat:', sessionOutputFormat);
+    console.log('🎯 RENDER - outputFormat state:', outputFormat);
+    console.log('🎯 RENDER - metadataStrategy (fallback):', metadataStrategy);
+    console.log('🎯 RENDER - Component state processingStrategy (IGNORED):', processingStrategy);
+    console.log('🎯 RENDER - Final format used for stages:', currentOutputFormat);
     console.log('🎯 RENDER - Generated stages:', stages.map(s => s.label));
     
     const getStageStatus = (stageId) => {
@@ -1973,13 +2281,27 @@ ORDER BY total_spent DESC;
       // Debug logging
       console.log(`🔍 Stage ${stageId}: currentStage=${activeStage}, stageStatus=${stageStatus}, currentIndex=${currentIndex}, stageIndex=${stageIndex}`);
       
+      // Special handling for 'complete' stage
+      if (stageId === 'complete') {
+        // Complete stage is only active/complete if we're actually at the complete stage
+        if (activeStage === 'complete') {
+          const status = stageStatus === 'completed' ? 'complete' : 'active';
+          console.log(`🏁 Complete stage status: ${status}`);
+          return status;
+        } else {
+          console.log(`⏳ Complete stage: pending (not at complete yet)`);
+          return 'pending';
+        }
+      }
+      
       if (stageId === activeStage) {
         // Current active stage - check if completed or in progress
         const status = stageStatus === 'completed' ? 'complete' : 'active';
         console.log(`🎯 Current stage ${stageId} status: ${status}`);
         return status;
-      } else if (stageIndex < currentIndex) {
-        // All previous stages are always complete when we've moved past them
+      } else if (stageIndex < currentIndex && currentIndex !== -1) {
+        // Only mark previous stages as complete if we have a valid current stage
+        // and we've actually progressed past them
         console.log(`✅ Previous stage ${stageId}: complete`);
         return 'complete';
       } else if (stageIndex === currentIndex && stageStatus === 'completed') {
@@ -1987,30 +2309,31 @@ ORDER BY total_spent DESC;
         console.log(`🏁 Current completed stage ${stageId}: complete`);
         return 'complete';
       } else {
-        // Future stages are pending
-        console.log(`⏳ Future stage ${stageId}: pending`);
+        // Future stages are pending, or we don't have a valid current stage
+        console.log(`⏳ Future/unknown stage ${stageId}: pending`);
         return 'pending';
       }
     };
 
-    // Calculate overall progress percentage based on completed stages
+    // Calculate overall progress percentage based on actually completed stages
     const currentStageIndex = stages.findIndex(s => s.id === activeStage);
     let progressPercentage = 0;
     
-    if (currentStageIndex >= 0) {
-      // Add completed stages
-      progressPercentage = (currentStageIndex / stages.length) * 100;
-      
-      // Add partial progress for current stage if completed
-      if (stageStatus === 'completed') {
-        progressPercentage += (1 / stages.length) * 100;
-      } else if (stageStatus === 'in_progress') {
-        // Add partial progress for in-progress stage
-        progressPercentage += (0.5 / stages.length) * 100;
+    // Count actually completed stages
+    let completedStagesCount = 0;
+    stages.forEach((stage, index) => {
+      const status = getStageStatus(stage.id);
+      if (status === 'complete') {
+        completedStagesCount++;
+      } else if (status === 'active' && stageStatus === 'in_progress') {
+        // Add partial progress for active in-progress stage
+        completedStagesCount += 0.5;
       }
-    }
+    });
     
-    progressPercentage = Math.round(progressPercentage);
+    progressPercentage = Math.round((completedStagesCount / stages.length) * 100);
+    
+    console.log(`📊 Progress calculation: ${completedStagesCount}/${stages.length} stages completed = ${progressPercentage}%`);
 
     // Process column tracking data
     const getColumnStats = () => {
@@ -2194,18 +2517,30 @@ ORDER BY total_spent DESC;
       
       // Check if this is a strategy selection question
       const isStrategyQuestion = questionType === 'strategy_selection' || 
-                                (selectedOption === 'single_pass' || selectedOption === 'multi_pass') ||
+                                (selectedOption === 'single_pass' || selectedOption === 'multi_pass' || selectedOption === 'pyspark') ||
                                 (options && options.some(opt => 
-                                  (typeof opt === 'string' && (opt === 'single_pass' || opt === 'multi_pass')) ||
-                                  (typeof opt === 'object' && (opt.value === 'single_pass' || opt.value === 'multi_pass'))
+                                  (typeof opt === 'string' && (opt === 'single_pass' || opt === 'multi_pass' || opt === 'pyspark')) ||
+                                  (typeof opt === 'object' && (opt.value === 'single_pass' || opt.value === 'multi_pass' || opt.value === 'pyspark'))
                                 ));
       
+      // Check if this is an output format selection question
+      const isOutputFormatQuestion = questionType === 'output_format_selection' ||
+                                    (selectedOption === 'SQL' || selectedOption === 'PySpark' || selectedOption === 'Spark' || selectedOption === 'Pandas') ||
+                                    (options && options.some(opt => 
+                                      (typeof opt === 'string' && (opt === 'SQL' || opt === 'PySpark' || opt === 'Spark' || opt === 'Pandas')) ||
+                                      (typeof opt === 'object' && (opt.value === 'SQL' || opt.value === 'PySpark' || opt.value === 'Spark' || opt.value === 'Pandas'))
+                                    ));
+      
       console.log('🔍 Is strategy question?', isStrategyQuestion);
+      console.log('🔍 Is output format question?', isOutputFormatQuestion);
       console.log('🔍 questionType === strategy_selection:', questionType === 'strategy_selection');
-      console.log('🔍 selectedOption is strategy:', selectedOption === 'single_pass' || selectedOption === 'multi_pass');
+      console.log('🔍 questionType === output_format_selection:', questionType === 'output_format_selection');
+      console.log('🔍 selectedOption is strategy:', selectedOption === 'single_pass' || selectedOption === 'multi_pass' || selectedOption === 'pyspark');
+      console.log('🔍 selectedOption is output format:', selectedOption === 'SQL' || selectedOption === 'PySpark' || selectedOption === 'Spark' || selectedOption === 'Pandas');
+      console.log('🔍 selectedOption value:', selectedOption);
       console.log('🔍 options contain strategy:', options && options.some(opt => 
-        (typeof opt === 'string' && (opt === 'single_pass' || opt === 'multi_pass')) ||
-        (typeof opt === 'object' && (opt.value === 'single_pass' || opt.value === 'multi_pass'))
+        (typeof opt === 'string' && (opt === 'single_pass' || opt === 'multi_pass' || opt === 'pyspark')) ||
+        (typeof opt === 'object' && (opt.value === 'single_pass' || opt.value === 'multi_pass' || opt.value === 'pyspark'))
       ));
       
       // Find the option object to get the label for display
@@ -2226,6 +2561,26 @@ ORDER BY total_spent DESC;
       
       // Send selection back to backend with session ID
       // Variables already extracted above: sessionId, questionId, questionType
+      
+      // Store output format preference for progress stage customization
+      if (isOutputFormatQuestion) {
+        console.log('💾 Storing output format (DETECTED OUTPUT FORMAT QUESTION):', selectedOption);
+        console.log('💾 Question ID:', questionId, 'Type:', questionType);
+        console.log('💾 Output format detected by:', {
+          questionType: questionType === 'output_format_selection',
+          selectedOptionIsFormat: selectedOption === 'SQL' || selectedOption === 'PySpark' || selectedOption === 'Spark' || selectedOption === 'Pandas',
+          optionsContainFormat: options && options.some(opt => 
+            (typeof opt === 'string' && (opt === 'SQL' || opt === 'PySpark' || opt === 'Spark' || opt === 'Pandas')) ||
+            (typeof opt === 'object' && (opt.value === 'SQL' || opt.value === 'PySpark' || opt.value === 'Spark' || opt.value === 'Pandas'))
+          )
+        });
+        console.log('💾 Previous outputFormat state:', outputFormat);
+        console.log('💾 Previous sessionOutputFormat state:', sessionOutputFormat);
+        setOutputFormat(selectedOption);
+        setSessionOutputFormat(selectedOption); // Also persist at session level
+        console.log('💾 setOutputFormat called with:', selectedOption);
+        console.log('💾 setSessionOutputFormat called with:', selectedOption);
+      }
       
       // Store processing strategy for SSE stage customization
       // NOTE: Strategy question moved to be LAST question in backend
@@ -2524,21 +2879,49 @@ ORDER BY total_spent DESC;
   };
 
   const renderCodeMessage = (message) => {
-    const { blockType, modelUsed, processingStrategy, completionMessage } = message.metadata || {};
-    const isGeneratedSQL = completionMessage; // This indicates it's a final SQL result
+    const { blockType, modelUsed, processingStrategy, completionMessage, language } = message.metadata || {};
+    const isGeneratedCode = completionMessage; // This indicates it's a final code result
+    
+    // Detect language/code type from multiple sources
+    const codeLanguage = language || blockType || 'sql';
+    const isPython = codeLanguage?.toLowerCase().includes('python') || 
+                     codeLanguage?.toLowerCase().includes('pyspark') ||
+                     processingStrategy?.toLowerCase().includes('pyspark');
+    const isSQL = codeLanguage?.toLowerCase().includes('sql') || !isPython;
+    
+    // Language-specific configuration
+    const getLanguageConfig = () => {
+      if (isPython) {
+        return {
+          displayName: codeLanguage?.toLowerCase().includes('pyspark') ? 'PySpark' : 'Python',
+          copyButtonText: codeLanguage?.toLowerCase().includes('pyspark') ? 'Copy PySpark Code' : 'Copy Python Code',
+          icon: '🐍',
+          colorClass: 'text-yellow-400'
+        };
+      } else {
+        return {
+          displayName: 'SQL',
+          copyButtonText: 'Copy SQL',
+          icon: '🗃️',
+          colorClass: 'text-blue-400'
+        };
+      }
+    };
+    
+    const langConfig = getLanguageConfig();
     
     // Ensure completionMessage is a string
     const completionText = typeof completionMessage === 'string' 
       ? completionMessage 
       : typeof completionMessage === 'object' 
       ? JSON.stringify(completionMessage) 
-      : 'Processing completed successfully';
+      : `${langConfig.displayName} code generated successfully`;
     
     return (
       <div key={message.id} className="flex justify-start mb-4">
         <div className="max-w-[95%] w-full">
-          {/* Completion message header for generated SQL */}
-          {isGeneratedSQL && (
+          {/* Completion message header for generated code */}
+          {isGeneratedCode && (
             <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg p-3 mb-3`}>
               <div className="flex items-center gap-2 mb-2">
                 <span className="w-2 h-2 rounded-full bg-green-500"></span>
@@ -2553,35 +2936,39 @@ ORDER BY total_spent DESC;
                 {processingStrategy && (
                   <span>Strategy: <span className="text-green-400">{String(processingStrategy).replace('_', ' ')}</span></span>
                 )}
+                <span>Language: <span className={langConfig.colorClass}>{langConfig.displayName}</span></span>
               </div>
             </div>
           )}
           
-          {/* SQL Code Block */}
+          {/* Code Block */}
           <div className={`${colors.tertiary} border ${colors.borderLight} rounded-lg overflow-hidden`}>
             <div className={`flex items-center justify-between px-4 py-2 ${colors.secondary} border-b ${colors.borderLight}`}>
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${colors.successBg}`}></span>
-                <span className={`${colors.text} text-xs font-mono`}>
-                  {blockType?.replace('_', ' ').toUpperCase() || 'SQL'} 
+                <span className={`${colors.text} text-xs font-mono flex items-center gap-1`}>
+                  <span>{langConfig.icon}</span>
+                  {blockType?.replace('_', ' ').toUpperCase() || langConfig.displayName.toUpperCase()} 
                 </span>
               </div>
               <button 
                 onClick={() => {
                   navigator.clipboard.writeText(message.content);
-                  showToast('SQL copied to clipboard!', 'success');
+                  showToast(`${langConfig.displayName} code copied to clipboard!`, 'success');
                 }}
                 className={`${colors.textSecondary} hover:${colors.text} text-xs px-2 py-1 rounded transition-colors`}
               >
-                Copy SQL
+                {langConfig.copyButtonText}
               </button>
             </div>
             <pre className={`p-4 text-sm font-mono overflow-x-auto leading-relaxed ${colors.text}`}>
-              <code>{typeof message.content === 'string' ? message.content : JSON.stringify(message.content, null, 2)}</code>
+              <code className={isPython ? 'language-python' : 'language-sql'}>
+                {typeof message.content === 'string' ? message.content : JSON.stringify(message.content, null, 2)}
+              </code>
             </pre>
           </div>
           <div className={`text-xs ${colors.textMuted} mt-1`}>
-            {isGeneratedSQL ? 'Generated' : 'Code'} • {new Date(message.timestamp).toLocaleTimeString()}
+            {isGeneratedCode ? 'Generated' : 'Code'} • {langConfig.displayName} • {new Date(message.timestamp).toLocaleTimeString()}
           </div>
         </div>
       </div>

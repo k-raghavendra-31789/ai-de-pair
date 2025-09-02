@@ -145,6 +145,95 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     return ['xlsx', 'xls', 'xlsm', 'xlsb'].includes(extension);
   }, []);
 
+  // Helper function to check if file is Jupyter Notebook
+  const isJupyterNotebook = useCallback((fileName) => {
+    return fileName.endsWith('.ipynb');
+  }, []);
+
+  // Helper function to check if file is Databricks Archive
+  const isDatabricksArchive = useCallback((fileName) => {
+    return fileName.endsWith('.dbc');
+  }, []);
+
+  // Helper function to check if file is Scala
+  const isScalaFile = useCallback((fileName) => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    return extension === 'scala' || extension === 'sc';
+  }, []);
+
+  // Helper function to format Jupyter notebook for display
+  const formatJupyterNotebook = useCallback((content) => {
+    try {
+      const notebook = JSON.parse(content);
+      if (notebook.cells && Array.isArray(notebook.cells)) {
+        let formattedContent = `# Jupyter Notebook: ${notebook.metadata?.kernelspec?.display_name || 'Unknown Kernel'}\n\n`;
+        
+        notebook.cells.forEach((cell, index) => {
+          formattedContent += `## Cell ${index + 1} [${cell.cell_type}]\n\n`;
+          
+          if (cell.cell_type === 'markdown') {
+            formattedContent += cell.source.join('') + '\n\n';
+          } else if (cell.cell_type === 'code') {
+            formattedContent += '```' + (notebook.metadata?.kernelspec?.language || 'python') + '\n';
+            formattedContent += cell.source.join('') + '\n';
+            formattedContent += '```\n\n';
+            
+            // Add outputs if available
+            if (cell.outputs && cell.outputs.length > 0) {
+              formattedContent += '**Output:**\n```\n';
+              cell.outputs.forEach(output => {
+                if (output.text) {
+                  formattedContent += output.text.join('');
+                } else if (output.data && output.data['text/plain']) {
+                  formattedContent += output.data['text/plain'].join('');
+                }
+              });
+              formattedContent += '\n```\n\n';
+            }
+          }
+        });
+        
+        return formattedContent;
+      }
+    } catch (error) {
+      console.warn('Failed to parse Jupyter notebook:', error);
+    }
+    return content; // Return original if parsing fails
+  }, []);
+
+  // Helper function to detect and format Databricks archive content
+  const formatDatabricksArchive = useCallback((content) => {
+    try {
+      // Try to parse as JSON first (many .dbc files contain JSON)
+      const parsed = JSON.parse(content);
+      if (parsed.commands || parsed.notebooks) {
+        let formattedContent = `# Databricks Archive\n\n`;
+        
+        if (parsed.commands) {
+          formattedContent += `## Commands (${parsed.commands.length})\n\n`;
+          parsed.commands.forEach((cmd, index) => {
+            formattedContent += `### Command ${index + 1}\n`;
+            formattedContent += '```sql\n' + cmd.command + '\n```\n\n';
+          });
+        }
+        
+        if (parsed.notebooks) {
+          formattedContent += `## Notebooks (${parsed.notebooks.length})\n\n`;
+          parsed.notebooks.forEach((notebook, index) => {
+            formattedContent += `### ${notebook.name || `Notebook ${index + 1}`}\n`;
+            formattedContent += `Language: ${notebook.language || 'Unknown'}\n\n`;
+          });
+        }
+        
+        return formattedContent;
+      }
+    } catch (error) {
+      // If it's not JSON, treat as binary/text
+      return `# Databricks Archive\n\n*This appears to be a binary Databricks archive file (.dbc)*\n\nTo work with this file, you may need to:\n1. Import it into a Databricks workspace\n2. Extract it using Databricks CLI\n3. Use specialized tools to view its contents\n\n**File size:** ${content.length} bytes\n**Preview (first 500 chars):**\n\`\`\`\n${content.substring(0, 500)}${content.length > 500 ? '...' : ''}\n\`\`\``;
+    }
+    return content;
+  }, []);
+
   // Handle file rename by updating open tabs
   const handleFileRenamed = useCallback((oldName, newName, newHandle) => {
     const updatedTabs = safeOpenTabs.map(tab => {
@@ -1819,11 +1908,32 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               onContextMenu={(e) => handleTabContextMenu(e, tab)}
               title={isDeleted ? `${tab.name} (deleted)` : tab.name}
             >
-              {/* File Icon - Simple colored indicator */}
+              {/* File Icon - Enhanced with special file type indicators */}
               <span className={`w-2 h-2 rounded-full mr-2 flex-shrink-0 ${
                 isDeleted ? colors.error.replace('text-', 'bg-') : 
+                isJupyterNotebook(tab.name) ? 'bg-orange-500' :
+                isDatabricksArchive(tab.name) ? 'bg-red-500' :
+                isScalaFile(tab.name) ? 'bg-purple-500' :
+                isExcelFile(tab.name) ? 'bg-green-500' :
                 isTerminalVisible ? colors.accentBg : colors.textMuted.replace('text-', 'bg-')
               }`}></span>
+              
+              {/* Special file type indicator */}
+              {isJupyterNotebook(tab.name) && (
+                <span className="text-xs text-orange-600 dark:text-orange-400 mr-1 font-mono" title="Jupyter Notebook">
+                  .ipynb
+                </span>
+              )}
+              {isDatabricksArchive(tab.name) && (
+                <span className="text-xs text-red-600 dark:text-red-400 mr-1 font-mono" title="Databricks Archive">
+                  .dbc
+                </span>
+              )}
+              {isScalaFile(tab.name) && (
+                <span className="text-xs text-purple-600 dark:text-purple-400 mr-1 font-mono" title="Scala with Spark Support">
+                  .scala
+                </span>
+              )}
               
               {/* File Name */}
               <span className={`text-sm truncate flex-1 ${isDeleted ? `${colors.error} line-through` : ''}`}>
@@ -2121,19 +2231,97 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                   onSheetChange={(activeSheet, sheetNames) => handleExcelSheetChange(activeTab.id, activeSheet, sheetNames)}
                 />
               ) : activeTab ? (
-                <MonacoEditor
-                  key={activeTab?.id} // Force re-render when tab changes
-                  value={activeTab.type === 'memory' && activeTab.fileId ? 
-                    // For memory files, use memory content if available, otherwise fall back to fileContents (for streaming)
+                (() => {
+                  const currentContent = activeTab.type === 'memory' && activeTab.fileId ? 
                     getCurrentMemoryFileContent(activeTab.fileId) || fileContents[activeTab?.id] || '' : 
-                    (fileContents[activeTab?.id] || '')
+                    (fileContents[activeTab?.id] || '');
+                  
+                  // Handle special file types
+                  if (isJupyterNotebook(activeTab.name)) {
+                    const formattedContent = formatJupyterNotebook(currentContent);
+                    return (
+                      <div className="p-4">
+                        <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                          <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300">
+                            <FaInfoCircle />
+                            <span className="font-medium">Jupyter Notebook (.ipynb)</span>
+                          </div>
+                          <p className="text-sm text-blue-600 dark:text-blue-400 mt-1">
+                            This is a read-only preview of the notebook. Cells and outputs are displayed as formatted text.
+                          </p>
+                        </div>
+                        <MonacoEditor
+                          key={activeTab?.id}
+                          value={formattedContent}
+                          onChange={(newValue) => handleContentChange(activeTab?.id, newValue)}
+                          fileName="preview.md"
+                          onSave={(content) => saveFileContent(activeTab?.name, content)}
+                          onGitCommit={handleGitCommit}
+                          wordWrap={wordWrap}
+                        />
+                      </div>
+                    );
+                  } else if (isDatabricksArchive(activeTab.name)) {
+                    const formattedContent = formatDatabricksArchive(currentContent);
+                    return (
+                      <div className="p-4">
+                        <div className="mb-4 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
+                          <div className="flex items-center gap-2 text-orange-700 dark:text-orange-300">
+                            <FaInfoCircle />
+                            <span className="font-medium">Databricks Archive (.dbc)</span>
+                          </div>
+                          <p className="text-sm text-orange-600 dark:text-orange-400 mt-1">
+                            This is a preview of the Databricks archive. For full functionality, import this into a Databricks workspace.
+                          </p>
+                        </div>
+                        <MonacoEditor
+                          key={activeTab?.id}
+                          value={formattedContent}
+                          onChange={(newValue) => handleContentChange(activeTab?.id, newValue)}
+                          fileName="preview.md"
+                          onSave={(content) => saveFileContent(activeTab?.name, content)}
+                          onGitCommit={handleGitCommit}
+                          wordWrap={wordWrap}
+                        />
+                      </div>
+                    );
+                  } else if (isScalaFile(activeTab.name)) {
+                    return (
+                      <div className="p-4">
+                        <div className="mb-4 p-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
+                          <div className="flex items-center gap-2 text-purple-700 dark:text-purple-300">
+                            <FaLightbulb />
+                            <span className="font-medium">Scala with Spark Support</span>
+                          </div>
+                          <p className="text-sm text-purple-600 dark:text-purple-400 mt-1">
+                            Enhanced syntax highlighting with Spark/Databricks keywords and autocompletion.
+                          </p>
+                        </div>
+                        <MonacoEditor
+                          key={activeTab?.id}
+                          value={currentContent}
+                          onChange={(newValue) => handleContentChange(activeTab?.id, newValue)}
+                          fileName={activeTab?.name}
+                          onSave={(content) => saveFileContent(activeTab?.name, content)}
+                          onGitCommit={handleGitCommit}
+                          wordWrap={wordWrap}
+                        />
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <MonacoEditor
+                        key={activeTab?.id}
+                        value={currentContent}
+                        onChange={(newValue) => handleContentChange(activeTab?.id, newValue)}
+                        fileName={activeTab?.name}
+                        onSave={(content) => saveFileContent(activeTab?.name, content)}
+                        onGitCommit={handleGitCommit}
+                        wordWrap={wordWrap}
+                      />
+                    );
                   }
-                  onChange={(newValue) => handleContentChange(activeTab?.id, newValue)}
-                  fileName={activeTab?.name}
-                  onSave={(content) => saveFileContent(activeTab?.name, content)}
-                  onGitCommit={handleGitCommit}
-                  wordWrap={wordWrap}
-                />
+                })()
               ) : null}
             </div>
           </div>
