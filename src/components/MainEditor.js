@@ -21,6 +21,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     sqlGeneration = {}, 
     memoryFiles = {}, 
     activeConnectionId, 
+    dbConnections = [],
     sqlExecution = {} 
   } = state || {};
   const { 
@@ -661,6 +662,212 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       alert(`SQL execution failed: ${error.message}`);
     }
   }, [activeConnectionId, executeFromAppState, activeTab?.name]);
+
+  // Get active connection details
+  const getActiveConnection = useCallback(() => {
+    // First check if it's a PySpark connection in sessionStorage (always check this first)
+    if (activeConnectionId?.startsWith('pyspark_')) {
+      try {
+        const pysparkConnections = JSON.parse(sessionStorage.getItem('pyspark_connections') || '[]');
+        const pysparkConnection = pysparkConnections.find(conn => conn.id === activeConnectionId);
+        if (pysparkConnection) {
+          // Migrate connection if it doesn't have type field
+          if (!pysparkConnection.type) {
+            pysparkConnection.type = 'pyspark';
+            console.log('🔧 Migrated PySpark connection to include type field:', pysparkConnection);
+            
+            // Update sessionStorage with migrated connection
+            const updatedConnections = pysparkConnections.map(conn => 
+              conn.id === pysparkConnection.id ? pysparkConnection : conn
+            );
+            sessionStorage.setItem('pyspark_connections', JSON.stringify(updatedConnections));
+          }
+          
+          // Ensure serverUrl is set
+          if (!pysparkConnection.serverUrl) {
+            pysparkConnection.serverUrl = 'http://localhost:8000';
+            console.log('🔧 Added default serverUrl to PySpark connection');
+            
+            // Update sessionStorage with serverUrl
+            const updatedConnections = pysparkConnections.map(conn => 
+              conn.id === pysparkConnection.id ? pysparkConnection : conn
+            );
+            sessionStorage.setItem('pyspark_connections', JSON.stringify(updatedConnections));
+          }
+          
+          // Removed logging to prevent infinite loops
+          return pysparkConnection;
+        }
+      } catch (error) {
+        console.warn('Failed to load PySpark connections from sessionStorage:', error);
+      }
+    }
+
+    // Fallback to regular database connections
+    if (!activeConnectionId || !dbConnections.length) {
+      return null;
+    }
+    return dbConnections.find(conn => conn.id === activeConnectionId);
+  }, [activeConnectionId, dbConnections]);
+
+  // PySpark Execution Function
+  const executePySparkCode = useCallback(async (code, selectedText = null) => {
+    console.log('🐍 MainEditor executePySparkCode called:', {
+      code: code?.substring(0, 100) + '...',
+      selectedText: selectedText?.substring(0, 100),
+      activeConnectionId,
+      activeTabName: activeTab?.name,
+      codeLength: code?.length
+    });
+
+    const activeConnection = getActiveConnection();
+    if (!activeConnection || activeConnection.type !== 'pyspark') {
+      console.warn('No PySpark connection selected');
+      alert('No PySpark connection selected. Please configure a PySpark connection first.');
+      return;
+    }
+
+    const codeToExecute = selectedText || code;
+    if (!codeToExecute?.trim()) {
+      console.warn('No PySpark code to execute');
+      alert('No PySpark code to execute. Please write some PySpark code first.');
+      return;
+    }
+
+    // Get the current file name as source identifier
+    const sourceFile = activeTab?.name || null;
+    console.log('MainEditor: Executing PySpark code for source file:', sourceFile);
+    console.log('Code to execute:', codeToExecute);
+
+    // Set execution state
+    setSqlExecuting(true);
+
+    try {
+      // Prepare request payload
+      const payload = {
+        code: codeToExecute,
+        session_id: `session_${Date.now()}`, // Generate session ID
+        user_config: {}, // Optional Spark config
+        include_stats: true,
+        result_limit: 100 // Default
+      };
+
+      console.log('🐍 Sending PySpark execution request:', payload);
+
+      // Execute PySpark code
+      const response = await fetch(`${activeConnection.serverUrl}/api/v1/pyspark/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`PySpark server responded with status: ${response.status}. Error: ${errorText}`);
+      }
+
+      const result = await response.json();
+      console.log('🐍 PySpark execution result:', result);
+
+      if (result.status === 'error') {
+        // Handle error objects properly
+        let errorMessage = 'PySpark execution failed';
+        if (result.error) {
+          if (typeof result.error === 'string') {
+            errorMessage = result.error;
+          } else if (result.error.message) {
+            errorMessage = result.error.message;
+          } else {
+            try {
+              errorMessage = JSON.stringify(result.error, null, 2);
+            } catch (e) {
+              errorMessage = `PySpark execution failed. Error: ${result.error.toString()}`;
+            }
+          }
+        }
+        throw new Error(errorMessage);
+      }
+
+      // Set results using the existing SQL results mechanism
+      // This will create a results tab in TerminalPanel
+      setSqlResults(
+        codeToExecute,    // query
+        result,           // results (the full PySpark response)
+        null,             // error (null since it was successful)
+        null,             // resultTabId (let it auto-generate)
+        sourceFile,       // sourceFile
+        'pyspark'         // connectionType
+      );
+
+      console.log('✅ PySpark execution completed');
+    } catch (error) {
+      console.error('❌ PySpark execution failed - Full error object:', error);
+      console.error('❌ Error type:', typeof error);
+      console.error('❌ Error constructor:', error.constructor?.name);
+      
+      // Comprehensive error message handling
+      let errorMessage = 'Unknown error occurred';
+      
+      try {
+        // Try multiple ways to extract a meaningful error message
+        if (error?.message) {
+          errorMessage = error.message;
+        } else if (error?.error) {
+          errorMessage = error.error;
+        } else if (error?.detail) {
+          errorMessage = error.detail;
+        } else if (typeof error === 'string') {
+          errorMessage = error;
+        } else if (error?.toString && typeof error.toString === 'function') {
+          const stringified = error.toString();
+          if (stringified !== '[object Object]') {
+            errorMessage = stringified;
+          }
+        }
+        
+        // If we still have [object Object], try JSON.stringify
+        if (errorMessage === '[object Object]' || errorMessage === 'Unknown error occurred') {
+          try {
+            const jsonError = JSON.stringify(error, null, 2);
+            if (jsonError && jsonError !== '{}') {
+              errorMessage = `Error details:\n${jsonError}`;
+            }
+          } catch (jsonErr) {
+            console.error('Failed to stringify error:', jsonErr);
+          }
+        }
+        
+        // Check for specific error types
+        if (error.name === 'TypeError' && error.message?.includes('fetch')) {
+          errorMessage = `Unable to connect to PySpark server at ${activeConnection.serverUrl}. Please ensure the PySpark server is running.`;
+        } else if (error.name === 'SyntaxError') {
+          errorMessage = `Invalid response from PySpark server. Response might not be valid JSON.`;
+        }
+        
+      } catch (processingError) {
+        console.error('Error while processing error message:', processingError);
+        errorMessage = `Error processing failed. Original error type: ${typeof error}`;
+      }
+      
+      console.error('❌ Final formatted error message:', errorMessage);
+      
+      // Set error results to show in the terminal panel
+      setSqlResults(
+        codeToExecute,    // query
+        null,             // results (null since it failed)
+        errorMessage,     // error message
+        null,             // resultTabId (let it auto-generate)
+        sourceFile,       // sourceFile
+        'pyspark'         // connectionType
+      );
+      
+      alert(`PySpark execution failed:\n\n${errorMessage}`);
+    } finally {
+      setSqlExecuting(false);
+    }
+  }, [activeConnectionId, getActiveConnection, activeTab?.name, setSqlExecuting, setSqlResults]);
 
   // Handle keyboard shortcuts for saving
   useEffect(() => {
@@ -2065,24 +2272,54 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               </button>
             )}
 
-            {/* Run SQL Button - Show for SQL files */}
-            {activeTab?.name.toLowerCase().endsWith('.sql') && (
+            {/* Run Code Button - Show for SQL and Python files */}
+            {(activeTab?.name.toLowerCase().endsWith('.sql') || activeTab?.name.toLowerCase().endsWith('.py')) && (
               <button
                 onClick={() => {
-                  let sqlContent;
+                  console.log('🚀 Run button clicked!');
+                  
+                  let codeContent;
                   if (activeTab?.type === 'memory') {
-                    sqlContent = getCurrentMemoryFileContent(activeTab?.fileId);
+                    codeContent = getCurrentMemoryFileContent(activeTab?.fileId);
                   } else {
-                    sqlContent = fileContents[activeTab?.id] || '';
+                    codeContent = fileContents[activeTab?.id] || '';
                   }
-                  console.log('🚀 Running SQL from MainEditor:', {
-                    tabType: activeTab?.type,
-                    tabId: activeTab?.id,
-                    fileId: activeTab?.fileId,
-                    contentLength: sqlContent?.length,
-                    contentPreview: sqlContent?.substring(0, 100)
-                  });
-                  executeSqlQuery(sqlContent);
+                  
+                  console.log('🚀 Code content length:', codeContent?.length);
+                  console.log('🚀 Code preview:', codeContent?.substring(0, 100));
+                  
+                  const activeConnection = getActiveConnection();
+                  const isPySparkFile = activeTab?.name.toLowerCase().endsWith('.py');
+                  const isPySparkConnection = activeConnection?.type === 'pyspark';
+                  
+                  // Simple debug logging
+                  console.log('🔍 File name:', activeTab?.name);
+                  console.log('🔍 File ID:', activeTab?.fileId);
+                  console.log('🔍 ActiveConnectionId:', activeConnectionId);
+                  console.log('🔍 ActiveConnection:', activeConnection);
+                  console.log('🔍 Connection type:', activeConnection?.type);
+                  console.log('🔍 Is PySpark connection:', isPySparkConnection);
+                  console.log('🔍 Is Python file:', isPySparkFile);
+                  console.log('🔍 Is SQL file:', activeTab?.name.toLowerCase().endsWith('.sql'));
+                  
+                  // Check if this is a PySpark memory file based on fileId
+                  const isPySparkMemoryFile = activeTab?.fileId?.includes('pyspark');
+                  console.log('🔍 Is PySpark memory file:', isPySparkMemoryFile);
+
+                  // Determine execution type
+                  if (isPySparkConnection && (isPySparkFile || activeTab?.name.toLowerCase().endsWith('.sql'))) {
+                    // PySpark execution for .py files or SQL files with PySpark connection
+                    console.log('🚀 Calling executePySparkCode...');
+                    executePySparkCode(codeContent);
+                  } else if (!isPySparkConnection && activeTab?.name.toLowerCase().endsWith('.sql')) {
+                    // SQL execution for .sql files with non-PySpark connection
+                    console.log('🚀 Calling executeSqlQuery...');
+                    executeSqlQuery(codeContent);
+                  } else {
+                    // Invalid combination
+                    console.log('🚀 Invalid combination detected');
+                    alert('Invalid combination: Please use a PySpark connection for Python files or a SQL connection for SQL files.');
+                  }
                 }}
                 disabled={sqlExecution.isExecuting || !activeConnectionId}
                 className={`px-3 py-1 text-xs rounded flex items-center gap-1 transition-colors ${
@@ -2092,10 +2329,22 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                 }`}
                 title={
                   !activeConnectionId 
-                    ? "No database connection selected. Please configure a connection first." 
+                    ? "No connection selected. Please configure a connection first." 
                     : sqlExecution.isExecuting 
-                      ? "Executing query..." 
-                      : "Run SQL Query (Ctrl+Enter)"
+                      ? "Executing code..." 
+                      : (() => {
+                          const activeConnection = getActiveConnection();
+                          const isPySparkFile = activeTab?.name.toLowerCase().endsWith('.py');
+                          const isPySparkConnection = activeConnection?.type === 'pyspark';
+                          
+                          if (isPySparkConnection && (isPySparkFile || activeTab?.name.toLowerCase().endsWith('.sql'))) {
+                            return "Run PySpark Code (Ctrl+Enter)";
+                          } else if (!isPySparkConnection && activeTab?.name.toLowerCase().endsWith('.sql')) {
+                            return "Run SQL Query (Ctrl+Enter)";
+                          } else {
+                            return "Invalid combination: Check connection and file type";
+                          }
+                        })()
                 }
               >
                 {sqlExecution.isExecuting ? (
@@ -2106,7 +2355,19 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                 ) : (
                   <>
                     <FaPlay />
-                    Run SQL
+                    {(() => {
+                      const activeConnection = getActiveConnection();
+                      const isPySparkFile = activeTab?.name.toLowerCase().endsWith('.py');
+                      const isPySparkConnection = activeConnection?.type === 'pyspark';
+                      
+                      if (isPySparkConnection && (isPySparkFile || activeTab?.name.toLowerCase().endsWith('.sql'))) {
+                        return "Run PySpark";
+                      } else if (!isPySparkConnection && activeTab?.name.toLowerCase().endsWith('.sql')) {
+                        return "Run SQL";
+                      } else {
+                        return "Run Code";
+                      }
+                    })()}
                   </>
                 )}
               </button>
