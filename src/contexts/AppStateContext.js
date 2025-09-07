@@ -61,11 +61,14 @@ const ACTION_TYPES = {
   DELETE_DB_CONNECTION: 'DELETE_DB_CONNECTION',
   SET_ACTIVE_CONNECTION: 'SET_ACTIVE_CONNECTION',
   SET_CONNECTION_STATUS: 'SET_CONNECTION_STATUS',
+  SET_FILE_CONNECTION: 'SET_FILE_CONNECTION', // New: Set connection for specific file
   
   // SQL Execution
   EXECUTE_SQL_QUERY: 'EXECUTE_SQL_QUERY',
   SET_SQL_RESULTS: 'SET_SQL_RESULTS',
   SET_SQL_EXECUTING: 'SET_SQL_EXECUTING',
+  SET_ACTIVE_SQL_TAB: 'SET_ACTIVE_SQL_TAB',
+  SET_SQL_TAB_EXECUTING: 'SET_SQL_TAB_EXECUTING',
   
   // UI State
   SET_PANEL_SIZES: 'SET_PANEL_SIZES',
@@ -79,7 +82,8 @@ const STORAGE_KEYS = {
   EXPANDED_FOLDERS: 'fileExplorer_expandedFolders',
   FILE_HANDLES: 'fileExplorer_fileHandles',
   DB_CONNECTIONS: 'databricks_connections', // sessionStorage key for connection metadata
-  ACTIVE_CONNECTION: 'databricks_active_connection' // sessionStorage key for active connection ID
+  ACTIVE_CONNECTION: 'databricks_active_connection', // sessionStorage key for active connection ID
+  FILE_CONNECTIONS: 'file_connections' // sessionStorage key for file-specific connections
 };
 
 // Helper function to get current content from version history
@@ -197,7 +201,19 @@ const loadActiveConnectionFromStorage = () => {
     return stored || null;
   } catch (error) {
     console.warn('Failed to load active connection from sessionStorage:', error);
+    sessionStorage.removeItem(STORAGE_KEYS.ACTIVE_CONNECTION);
     return null;
+  }
+};
+
+const loadFileConnectionsFromStorage = () => {
+  try {
+    const stored = sessionStorage.getItem(STORAGE_KEYS.FILE_CONNECTIONS);
+    return stored ? JSON.parse(stored) : {};
+  } catch (error) {
+    console.warn('Failed to load file connections from sessionStorage:', error);
+    sessionStorage.removeItem(STORAGE_KEYS.FILE_CONNECTIONS);
+    return {};
   }
 };
 
@@ -265,6 +281,7 @@ const createInitialState = () => ({
   // Database Connection State
   dbConnections: loadDatabaseConnectionsFromStorage(), // Load from sessionStorage
   activeConnectionId: loadActiveConnectionFromStorage(), // Load active connection from sessionStorage
+  fileConnections: loadFileConnectionsFromStorage(), // Load file-specific connections from sessionStorage
   connectionStatus: {}, // { connectionId: { isConnected: boolean, lastChecked: Date, error: string } }
   
   // SQL Execution State
@@ -1100,6 +1117,7 @@ const appStateReducer = (state, action) => {
         name: connectionData.name,
         serverHostname: connectionData.serverHostname,
         httpPath: connectionData.httpPath,
+        type: connectionData.type || 'databricks',
         createdAt: new Date().toISOString(),
         lastUsed: null
       };
@@ -1109,10 +1127,18 @@ const appStateReducer = (state, action) => {
       const updatedConnections = [...existingConnections, connectionMetadata];
       sessionStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(updatedConnections));
       
-      return {
+      const newState = {
         ...state,
         dbConnections: [...state.dbConnections, connectionMetadata]
       };
+      
+      // If no active connection is set, make this the active connection
+      if (!state.activeConnectionId) {
+        newState.activeConnectionId = connectionId;
+        saveActiveConnectionToStorage(connectionId);
+      }
+      
+      return newState;
     }
 
     case ACTION_TYPES.UPDATE_DB_CONNECTION: {
@@ -1184,6 +1210,23 @@ const appStateReducer = (state, action) => {
       };
     }
 
+    case ACTION_TYPES.SET_FILE_CONNECTION: {
+      const { fileName, connectionId } = action.payload;
+      
+      const updatedFileConnections = {
+        ...state.fileConnections,
+        [fileName]: connectionId
+      };
+      
+      // Persist to sessionStorage
+      sessionStorage.setItem(STORAGE_KEYS.FILE_CONNECTIONS, JSON.stringify(updatedFileConnections));
+      
+      return {
+        ...state,
+        fileConnections: updatedFileConnections
+      };
+    }
+
     case ACTION_TYPES.SET_CONNECTION_STATUS: {
       const { connectionId, status } = action.payload;
       
@@ -1218,6 +1261,51 @@ const appStateReducer = (state, action) => {
     case ACTION_TYPES.SET_SQL_RESULTS: {
       const { query, results, error, resultTabId, sourceFile, isLoading, connectionType } = action.payload;
       console.log('AppStateContext: SET_SQL_RESULTS action received:', { query, results, error, resultTabId, sourceFile, isLoading, connectionType });
+      
+      // Create file-based tab ID if sourceFile is provided
+      let tabId;
+      if (sourceFile && (sourceFile.endsWith('.py') || sourceFile.endsWith('.sql'))) {
+        // Use filename without extension as tab ID
+        tabId = sourceFile.replace(/\.(py|sql)$/, '');
+      } else {
+        // Fallback to timestamp-based ID
+        tabId = resultTabId || `result-${Date.now()}`;
+      }
+      
+      // Create new tab data
+      const newTab = {
+        id: tabId,
+        query: query,
+        results: results,
+        error: error,
+        sourceFile: sourceFile,
+        connectionType: connectionType,
+        status: error ? 'error' : 'success',
+        timestamp: new Date().toLocaleTimeString(),
+        isExecuting: false,
+        isLoading: isLoading || false
+      };
+      
+      // Update or add tab
+      const existingTabs = state.sqlExecution.resultTabs || [];
+      const existingTabIndex = existingTabs.findIndex(tab => tab.id === tabId);
+      
+      let updatedTabs;
+      if (existingTabIndex >= 0) {
+        // Update existing tab, preserving isExecuting state
+        const existingTab = existingTabs[existingTabIndex];
+        updatedTabs = [...existingTabs];
+        updatedTabs[existingTabIndex] = {
+          ...newTab,
+          isExecuting: existingTab.isExecuting // Preserve existing executing state
+        };
+        console.log('AppStateContext: Updated existing tab:', tabId, 'preserving isExecuting:', existingTab.isExecuting);
+      } else {
+        // Add new tab
+        updatedTabs = [...existingTabs, newTab];
+        console.log('AppStateContext: Created new tab:', tabId);
+      }
+      
       const newState = {
         ...state,
         sqlExecution: {
@@ -1226,14 +1314,72 @@ const appStateReducer = (state, action) => {
           lastResults: results,
           lastError: error,
           lastSourceFile: sourceFile,
-          lastResultTabId: resultTabId,
+          lastResultTabId: tabId,
           lastConnectionType: connectionType,
           isLoading: isLoading || false,
-          resultTabs: resultTabId ? [...state.sqlExecution.resultTabs, resultTabId] : state.sqlExecution.resultTabs
+          resultTabs: updatedTabs,
+          activeTabId: tabId  // Set the new/updated tab as active
         }
       };
       console.log('AppStateContext: New SQL execution state:', newState.sqlExecution);
+      console.log('AppStateContext: Total tabs:', updatedTabs.length, 'Active tab:', tabId);
       return newState;
+    }
+
+    case ACTION_TYPES.SET_ACTIVE_SQL_TAB: {
+      const tabId = action.payload;
+      console.log('AppStateContext: Setting active SQL tab:', tabId);
+      return {
+        ...state,
+        sqlExecution: {
+          ...state.sqlExecution,
+          activeTabId: tabId
+        }
+      };
+    }
+
+    case ACTION_TYPES.SET_SQL_TAB_EXECUTING: {
+      const { tabId, isExecuting } = action.payload;
+      console.log('AppStateContext: Setting tab executing state:', { tabId, isExecuting });
+      
+      // Create or update the tab with executing state
+      const existingTabs = state.sqlExecution.resultTabs || [];
+      const existingTabIndex = existingTabs.findIndex(tab => tab.id === tabId);
+      
+      let updatedTabs;
+      if (existingTabIndex >= 0) {
+        // Update existing tab
+        updatedTabs = [...existingTabs];
+        updatedTabs[existingTabIndex] = {
+          ...updatedTabs[existingTabIndex],
+          isExecuting: isExecuting,
+          status: isExecuting ? 'executing' : updatedTabs[existingTabIndex].status
+        };
+      } else if (isExecuting) {
+        // Create new tab in executing state
+        const newTab = {
+          id: tabId,
+          query: null,
+          results: null,
+          error: null,
+          status: 'executing',
+          isExecuting: true,
+          timestamp: new Date().toLocaleTimeString()
+        };
+        updatedTabs = [...existingTabs, newTab];
+      } else {
+        // No tab exists and not executing, do nothing
+        updatedTabs = existingTabs;
+      }
+      
+      return {
+        ...state,
+        sqlExecution: {
+          ...state.sqlExecution,
+          resultTabs: updatedTabs,
+          activeTabId: isExecuting ? tabId : state.sqlExecution.activeTabId
+        }
+      };
     }
 
     default:
@@ -1257,6 +1403,47 @@ export const AppStateProvider = ({ children }) => {
   useEffect(() => {
     saveExpandedFoldersToStorage(state.expandedFolders);
   }, [state.expandedFolders]);
+  
+  // Load existing Databricks connections and auto-activate first connection if none active
+  useEffect(() => {
+    try {
+      // Load existing Databricks connections from sessionStorage
+      const databricksConnections = JSON.parse(sessionStorage.getItem('databricks_connections') || '[]');
+      
+      databricksConnections.forEach(connection => {
+        // Check if this connection is already in app state
+        const existsInState = state.dbConnections.find(c => c.id === connection.id);
+        if (!existsInState) {
+          console.log('🧱 Loading Databricks connection from sessionStorage:', connection.name);
+          dispatch({ 
+            type: ACTION_TYPES.ADD_DB_CONNECTION, 
+            payload: { 
+              connectionId: connection.id, 
+              connectionData: {
+                ...connection,
+                type: 'databricks'
+              }
+            }
+          });
+        }
+      });
+      
+    } catch (error) {
+      console.error('🧱 Failed to load Databricks connections from sessionStorage:', error);
+    }
+  }, [state.dbConnections]); // React to changes in dbConnections
+  
+  // Auto-activate first connection if none is active
+  useEffect(() => {
+    if (!state.activeConnectionId && state.dbConnections.length > 0) {
+      const firstConnection = state.dbConnections[0];
+      console.log('🔗 Auto-activating first connection:', firstConnection.name);
+      dispatch({ 
+        type: ACTION_TYPES.SET_ACTIVE_CONNECTION, 
+        payload: { connectionId: firstConnection.id }
+      });
+    }
+  }, [state.activeConnectionId, state.dbConnections]);
   
   // Action creators
   const actions = {
@@ -1386,6 +1573,10 @@ export const AppStateProvider = ({ children }) => {
       type: ACTION_TYPES.SET_ACTIVE_CONNECTION, 
       payload: { connectionId } 
     }),
+    setFileConnection: (fileName, connectionId) => dispatch({
+      type: ACTION_TYPES.SET_FILE_CONNECTION,
+      payload: { fileName, connectionId }
+    }),
     setConnectionStatus: (connectionId, status) => dispatch({ 
       type: ACTION_TYPES.SET_CONNECTION_STATUS, 
       payload: { connectionId, status } 
@@ -1407,6 +1598,24 @@ export const AppStateProvider = ({ children }) => {
       // Create result tab identifier based on source file if provided
       const resultTabId = sourceFile ? `result-${sourceFile}` : `result-${Date.now()}`;
       
+      // Create file-based tab ID for .sql files
+      let tabId;
+      if (sourceFile && sourceFile.endsWith('.sql')) {
+        tabId = sourceFile.replace(/\.sql$/, '');
+      } else {
+        tabId = resultTabId;
+      }
+      
+      // Open terminal automatically to show loading state
+      if (actions?.toggleTerminal && !state?.isTerminalVisible) {
+        actions.toggleTerminal();
+      }
+      
+      // Set tab-specific executing state
+      if (actions?.setSqlTabExecuting) {
+        actions.setSqlTabExecuting(tabId, true);
+      }
+      
       // Set executing state and create/update loading tab
       dispatch({
         type: ACTION_TYPES.SET_SQL_EXECUTING,
@@ -1419,7 +1628,7 @@ export const AppStateProvider = ({ children }) => {
           query: query.trim(), 
           results: null, 
           error: null, 
-          resultTabId,
+          resultTabId: tabId,
           sourceFile,
           isLoading: true 
         }
@@ -1437,7 +1646,7 @@ export const AppStateProvider = ({ children }) => {
             query: query.trim(), 
             results: result, 
             error: null, 
-            resultTabId,
+            resultTabId: tabId,
             sourceFile,
             isLoading: false 
           }
@@ -1451,12 +1660,17 @@ export const AppStateProvider = ({ children }) => {
             query: query.trim(), 
             results: null, 
             error: error.message, 
-            resultTabId,
+            resultTabId: tabId,
             sourceFile,
             isLoading: false 
           }
         });
       } finally {
+        // Reset tab-specific executing state
+        if (actions?.setSqlTabExecuting) {
+          actions.setSqlTabExecuting(tabId, false);
+        }
+        
         dispatch({
           type: ACTION_TYPES.SET_SQL_EXECUTING,
           payload: { isExecuting: false }
@@ -1470,6 +1684,14 @@ export const AppStateProvider = ({ children }) => {
     setSqlResults: (query, results, error, resultTabId, sourceFile, connectionType) => dispatch({
       type: ACTION_TYPES.SET_SQL_RESULTS,
       payload: { query, results, error, resultTabId, sourceFile, connectionType }
+    }),
+    setActiveSqlTab: (tabId) => dispatch({
+      type: ACTION_TYPES.SET_ACTIVE_SQL_TAB,
+      payload: tabId
+    }),
+    setSqlTabExecuting: (tabId, isExecuting) => dispatch({
+      type: ACTION_TYPES.SET_SQL_TAB_EXECUTING,
+      payload: { tabId, isExecuting }
     }),
   };
   
