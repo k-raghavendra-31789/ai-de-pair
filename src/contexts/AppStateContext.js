@@ -1136,8 +1136,13 @@ const appStateReducer = (state, action) => {
       
       const filteredConnections = state.dbConnections.filter(conn => conn.id !== connectionId);
       
-      // Update sessionStorage
+      // Update sessionStorage for databricks connections
       sessionStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(filteredConnections));
+      
+      // Also clean up PySpark connections sessionStorage
+      const pysparkConnections = JSON.parse(sessionStorage.getItem('pyspark_connections') || '[]');
+      const filteredPysparkConnections = pysparkConnections.filter(conn => conn.id !== connectionId);
+      sessionStorage.setItem('pyspark_connections', JSON.stringify(filteredPysparkConnections));
       
       // Clear active connection if it was deleted
       const newActiveId = state.activeConnectionId === connectionId ? null : state.activeConnectionId;
@@ -1211,8 +1216,8 @@ const appStateReducer = (state, action) => {
     }
 
     case ACTION_TYPES.SET_SQL_RESULTS: {
-      const { query, results, error, resultTabId, sourceFile, isLoading } = action.payload;
-      console.log('AppStateContext: SET_SQL_RESULTS action received:', { query, results, error, resultTabId, sourceFile, isLoading });
+      const { query, results, error, resultTabId, sourceFile, isLoading, connectionType } = action.payload;
+      console.log('AppStateContext: SET_SQL_RESULTS action received:', { query, results, error, resultTabId, sourceFile, isLoading, connectionType });
       const newState = {
         ...state,
         sqlExecution: {
@@ -1222,6 +1227,7 @@ const appStateReducer = (state, action) => {
           lastError: error,
           lastSourceFile: sourceFile,
           lastResultTabId: resultTabId,
+          lastConnectionType: connectionType,
           isLoading: isLoading || false,
           resultTabs: resultTabId ? [...state.sqlExecution.resultTabs, resultTabId] : state.sqlExecution.resultTabs
         }
@@ -1461,9 +1467,9 @@ export const AppStateProvider = ({ children }) => {
       type: ACTION_TYPES.SET_SQL_EXECUTING,
       payload: { isExecuting }
     }),
-    setSqlResults: (query, results, error, resultTabId) => dispatch({
+    setSqlResults: (query, results, error, resultTabId, sourceFile, connectionType) => dispatch({
       type: ACTION_TYPES.SET_SQL_RESULTS,
-      payload: { query, results, error, resultTabId }
+      payload: { query, results, error, resultTabId, sourceFile, connectionType }
     }),
   };
   

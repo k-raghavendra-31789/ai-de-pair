@@ -43,11 +43,32 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   
   // Chat Messages State
   const [chatMessages, setChatMessages] = useState([]);
+  
+  // Debug: Track all chat message changes
+  const prevChatMessagesRef = useRef([]);
+  useEffect(() => {
+    const prev = prevChatMessagesRef.current;
+    const current = chatMessages;
+    
+    if (prev.length !== current.length) {
+      console.log(`🔄 CHAT MESSAGES CHANGED: ${prev.length} → ${current.length}`);
+      if (current.length < prev.length) {
+        console.log('🚨 MESSAGES DECREASED! This suggests messages were removed or cleared');
+        console.log('🚨 Previous messages:', prev.map(m => ({ id: m.id, type: m.type })));
+        console.log('🚨 Current messages:', current.map(m => ({ id: m.id, type: m.type })));
+      } else {
+        console.log('✅ Messages increased (normal)');
+      }
+    }
+    
+    prevChatMessagesRef.current = [...chatMessages];
+  }, [chatMessages]);
   const [activeGenerationId, setActiveGenerationId] = useState(null);
   const [currentSessionId, setCurrentSessionId] = useState(null); // Track active session
   const [sqlGenerated, setSqlGenerated] = useState(false); // Track if SQL has been generated
   const [sseConnection, setSseConnection] = useState(null);
   const [progressData, setProgressData] = useState(null);
+  const [completedProgressMessages, setCompletedProgressMessages] = useState(new Set()); // Track completed progress messages
   const [processingStrategy, setProcessingStrategy] = useState(null); // Store strategy selection
   const [sessionStrategy, setSessionStrategy] = useState(null); // Persist strategy for entire session
   const [outputFormat, setOutputFormat] = useState(null); // Store user's preferred output format (SQL, PySpark, Spark, Pandas)
@@ -93,6 +114,7 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
       const savedMessages = localStorage.getItem('ai-de-chat-messages');
       if (savedMessages) {
         const parsedMessages = JSON.parse(savedMessages);
+        console.log('📱 Loading messages from localStorage:', parsedMessages.length, 'messages');
         setChatMessages(parsedMessages);
       }
     } catch (error) {
@@ -102,6 +124,12 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
 
   useEffect(() => {
     try {
+      console.log('💾 Saving messages to localStorage:', chatMessages.length, 'messages');
+      console.log('💾 Message types breakdown:', chatMessages.reduce((acc, msg) => {
+        acc[msg.type] = (acc[msg.type] || 0) + 1;
+        return acc;
+      }, {}));
+      console.log('💾 All message IDs:', chatMessages.map(m => ({ id: m.id, type: m.type })));
       localStorage.setItem('ai-de-chat-messages', JSON.stringify(chatMessages));
     } catch (error) {
       console.warn('Failed to save chat messages to localStorage:', error);
@@ -114,7 +142,41 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
 
   useEffect(() => {
     scrollToBottom();
+    
+    // Debug: Track any sudden message count changes
+    if (chatMessages.length === 0 && localStorage.getItem('ai-de-chat-messages')) {
+      console.log('🚨 WARNING: Messages array is empty but localStorage has data!');
+      console.log('🚨 This suggests messages were cleared unexpectedly');
+    }
   }, [chatMessages]);
+
+  // Helper function to generate appropriate completion message based on strategy/content
+  const generateCompletionMessage = (strategy, content) => {
+    // Check for PySpark-specific indicators
+    if (strategy?.toLowerCase().includes('pyspark') ||
+        strategy?.toLowerCase().includes('python') ||
+        content?.includes('pyspark') ||
+        content?.includes('from pyspark') ||
+        content?.includes('import pyspark')) {
+      return 'PySpark code generation completed';
+    }
+    
+    // Check for other Python/Pandas indicators
+    if (strategy?.toLowerCase().includes('pandas') ||
+        content?.includes('import pandas') ||
+        content?.includes('pd.')) {
+      return 'Pandas code generation completed';
+    }
+    
+    // Check for Spark/Scala indicators
+    if (strategy?.toLowerCase().includes('spark') ||
+        content?.includes('import org.apache.spark')) {
+      return 'Spark code generation completed';
+    }
+    
+    // Default to SQL
+    return 'SQL generation completed';
+  };
 
   // SQL Building Functions for Progressive Generation
   const buildSqlForStage = (stage, sourceFile) => {
@@ -360,14 +422,23 @@ ORDER BY total_spent DESC;
         console.log('🔍 Checking for extracted_sql:', data.data?.extracted_sql, data.extracted_sql);
         console.log('🔍 Full event data structure:', JSON.stringify(data, null, 2));
         
-        // Handle completion event with SQL result - check multiple completion indicators
+        // Handle completion event with code result - check multiple completion indicators
         // Check for nested message structure first (your backend format)
-        const extractedSQL = data.message?.data?.extracted_sql || 
-                           data.data?.extracted_sql || 
-                           data.extracted_sql;
+        const extractedCode = data.message?.data?.extracted_sql ||     // Legacy SQL field
+                             data.message?.data?.extracted_code ||     // New generic field  
+                             data.message?.data?.generated_python ||   // PySpark specific
+                             data.message?.data?.generated_code ||     // Generic code field
+                             data.data?.extracted_sql ||               // Legacy SQL field
+                             data.data?.extracted_code ||              // New generic field
+                             data.data?.generated_python ||            // PySpark specific  
+                             data.data?.generated_code ||              // Generic code field
+                             data.extracted_sql ||                     // Legacy SQL field
+                             data.extracted_code ||                    // New generic field
+                             data.generated_python ||                  // PySpark specific
+                             data.generated_code;                      // Generic code field
         
         // Check completion indicators in nested structure
-        const isCompleted = extractedSQL || 
+        const isCompleted = extractedCode || 
                            data.message?.status === 'success' ||
                            data.message?.event_type === 'completion' ||
                            data.message?.processing_status === 'completed' ||
@@ -380,21 +451,30 @@ ORDER BY total_spent DESC;
                            (typeof data.message === 'string' && data.message?.includes('completed successfully')) ||
                            (typeof data.message?.message === 'string' && data.message?.message?.includes('completed successfully'));
         
-        console.log('🎯 Completion check - extractedSQL:', !!extractedSQL, 'isCompleted:', isCompleted);
+        console.log('🎯 Completion check - extractedCode:', !!extractedCode, 'isCompleted:', isCompleted);
         console.log('🔍 Processing strategy check:', processingStrategy);
         console.log('🔍 Event type check for single_pass:', data.event_type);
         console.log('🔍 Detailed completion check:');
         console.log('  - data.message?.data?.extracted_sql:', data.message?.data?.extracted_sql ? 'FOUND' : 'NOT FOUND');
+        console.log('  - data.message?.data?.extracted_code:', data.message?.data?.extracted_code ? 'FOUND' : 'NOT FOUND');
+        console.log('  - data.message?.data?.generated_python:', data.message?.data?.generated_python ? 'FOUND' : 'NOT FOUND');
+        console.log('  - data.message?.data?.generated_code:', data.message?.data?.generated_code ? 'FOUND (✅ PREFERRED)' : 'NOT FOUND');
         console.log('  - data.data?.extracted_sql:', data.data?.extracted_sql ? 'FOUND' : 'NOT FOUND');
-        console.log('  - data.extracted_sql:', data.extracted_sql ? 'FOUND' : 'NOT FOUND'); 
+        console.log('  - data.data?.extracted_code:', data.data?.extracted_code ? 'FOUND' : 'NOT FOUND');
+        console.log('  - data.data?.generated_python:', data.data?.generated_python ? 'FOUND' : 'NOT FOUND');
+        console.log('  - data.data?.generated_code:', data.data?.generated_code ? 'FOUND (✅ PREFERRED)' : 'NOT FOUND');
+        console.log('  - data.extracted_sql:', data.extracted_sql ? 'FOUND' : 'NOT FOUND');
+        console.log('  - data.extracted_code:', data.extracted_code ? 'FOUND' : 'NOT FOUND');
+        console.log('  - data.generated_python:', data.generated_python ? 'FOUND' : 'NOT FOUND');
+        console.log('  - data.generated_code:', data.generated_code ? 'FOUND (✅ PREFERRED)' : 'NOT FOUND'); 
         console.log('  - data.message?.status:', data.message?.status);
         console.log('  - data.message?.event_type:', data.message?.event_type);
         console.log('  - data.message?.processing_status:', data.message?.processing_status);
         console.log('  - data.event_type:', data.event_type);
         console.log('  - message object type:', typeof data.message);
         
-        if (isCompleted && extractedSQL) {
-          console.log('🎉 SQL extraction completed:', extractedSQL);
+        if (isCompleted && extractedCode) {
+          console.log('🎉 Code extraction completed:', extractedCode);
           console.log('🔄 Updating progress to complete and adding SQL result...');
           
           // Clear the completion timeout since we received the actual completion event
@@ -414,6 +494,9 @@ ORDER BY total_spent DESC;
           
           // Update progress to completed state first
           setChatMessages(prev => {
+            console.log('🏁 BEFORE updating progress to complete - message count:', prev.length);
+            console.log('🏁 BEFORE progress update - all messages:', prev.map(m => ({ id: m.id, type: m.type, generationId: m.generationId })));
+            
             const existingIndex = prev.findIndex(msg => 
               msg.type === 'progress' && msg.generationId === generationId
             );
@@ -432,8 +515,11 @@ ORDER BY total_spent DESC;
               const newMessages = [...prev];
               newMessages[existingIndex] = completedProgressMessage;
               console.log('✅ Updated progress message to complete');
+              console.log('🏁 AFTER updating progress to complete - message count:', newMessages.length);
+              console.log('🏁 AFTER progress update - all messages:', newMessages.map(m => ({ id: m.id, type: m.type, generationId: m.generationId })));
               return newMessages;
             }
+            console.log('⚠️ No progress message found to update');
             return prev;
           });
           
@@ -442,16 +528,16 @@ ORDER BY total_spent DESC;
           const eventStrategy = data.data?.processing_strategy || data.processing_strategy;
           
           // Also detect strategy from content if not explicitly provided
-          const isPySparkContent = extractedSQL && typeof extractedSQL === 'string' && (
-            extractedSQL.includes('pyspark') || 
-            extractedSQL.includes('spark.') ||
-            extractedSQL.includes('SparkSession') ||
-            extractedSQL.includes('from pyspark') ||
-            extractedSQL.includes('import pyspark') ||
-            extractedSQL.includes('.appName(') ||
-            extractedSQL.includes('.getOrCreate()') ||
-            extractedSQL.startsWith('# python') ||
-            extractedSQL.startsWith('"""python')
+          const isPySparkContent = extractedCode && typeof extractedCode === 'string' && (
+            extractedCode.includes('pyspark') || 
+            extractedCode.includes('spark.') ||
+            extractedCode.includes('SparkSession') ||
+            extractedCode.includes('from pyspark') ||
+            extractedCode.includes('import pyspark') ||
+            extractedCode.includes('.appName(') ||
+            extractedCode.includes('.getOrCreate()') ||
+            extractedCode.startsWith('# python') ||
+            extractedCode.startsWith('"""python')
           );
           
           let currentStrategy = eventStrategy || sessionStrategy || processingStrategy;
@@ -484,8 +570,8 @@ ORDER BY total_spent DESC;
           const fileName = `chat-generated-${filePrefix}-${timestamp}.${fileExtension}`;
           
           console.log('📄 Creating memory file with ID:', memoryFileId, 'name:', fileName);
-          console.log('📝 Code content length:', extractedSQL.length);
-          console.log('📝 Code content preview:', extractedSQL.substring(0, 100) + '...');
+          console.log('📝 Code content length:', extractedCode.length);
+          console.log('📝 Code content preview:', extractedCode.substring(0, 100) + '...');
           
           // Create in-memory file placeholder (no initial version - streaming will create the version)
           addMemoryFilePlaceholder(memoryFileId, fileName, fileType, false);
@@ -504,7 +590,7 @@ ORDER BY total_spent DESC;
               generationId,
               modelUsed: data.message?.data?.model_used || data.data?.model_used || data.model_used,
               processingStrategy: data.message?.data?.processing_strategy || data.data?.processing_strategy || data.processing_strategy,
-              completionMessage: data.message?.message || data.message || 'SQL generation completed'
+              completionMessage: data.message?.message || data.message || generateCompletionMessage(currentStrategy, extractedCode)
             }
           };
           
@@ -517,15 +603,15 @@ ORDER BY total_spent DESC;
           setActiveTab(newTab.id);
           console.log('✅ Active tab set to:', newTab.id);
           
-          // Start streaming the SQL content
-          streamSQLContent(memoryFileId, extractedSQL);
+          // Start streaming the code content
+          streamSQLContent(memoryFileId, extractedCode);
           
           console.log('✅ SQL file created and streaming initiated:', fileName);
           
           // Note: Don't close SSE here - wait for connection_closing event
           return;
-        } else if (isCompleted && !extractedSQL) {
-          console.log('⚠️ Completion detected but no extracted SQL found');
+        } else if (isCompleted && !extractedCode) {
+          console.log('⚠️ Completion detected but no extracted code found');
           console.log('🔍 Searching for SQL in other event fields...');
           
           // Try to find SQL in other possible locations
@@ -604,7 +690,7 @@ ORDER BY total_spent DESC;
                 generationId,
                 modelUsed: data.message?.data?.model_used || data.data?.model_used || data.model_used,
                 processingStrategy: data.message?.data?.processing_strategy || data.data?.processing_strategy || data.processing_strategy,
-                completionMessage: data.message?.message || data.message || 'SQL generation completed'
+                completionMessage: data.message?.message || data.message || generateCompletionMessage(currentStrategy, possibleSQL)
               }
             };
             
@@ -619,6 +705,7 @@ ORDER BY total_spent DESC;
           } else {
             console.log('❌ No SQL found in any event fields');
           }
+          
           // Handle case where completion is indicated but no SQL is present
           console.log('⚠️ Completion detected but no extracted SQL found');
           console.log('🔄 Marking progress as complete anyway...');
@@ -640,11 +727,11 @@ ORDER BY total_spent DESC;
               const newMessages = [...prev];
               newMessages[existingIndex] = completedProgressMessage;
               
-              // Add an error message about no SQL being generated
+              // Add an error message about no code being generated
               newMessages.push({
                 id: `error_${Date.now()}`,
                 type: 'text',
-                content: 'Processing completed but no SQL was generated. Please try rephrasing your question.',
+                content: 'Processing completed but no code was generated. Please try rephrasing your question.',
                 timestamp: new Date().toISOString(),
                 generationId,
                 metadata: {
@@ -845,14 +932,25 @@ ORDER BY total_spent DESC;
           
           if (existingIndex >= 0) {
             console.log('✏️ Updating existing progress message at index:', existingIndex);
+            console.log('✏️ Previous message count:', prev.length);
+            console.log('✏️ Previous message IDs:', prev.map(m => ({ id: m.id, type: m.type })));
             // Update existing progress message
             const newMessages = [...prev];
             newMessages[existingIndex] = progressMessage;
+            console.log('✏️ New message count after update:', newMessages.length);
+            console.log('✏️ New message IDs:', newMessages.map(m => ({ id: m.id, type: m.type })));
+            console.log('✏️ Updated message:', progressMessage);
             return newMessages;
           } else {
             console.log('➕ Creating new progress message');
+            console.log('➕ Previous message count:', prev.length);
+            console.log('➕ Previous message IDs:', prev.map(m => ({ id: m.id, type: m.type })));
             // Create new progress message
-            return [...prev, progressMessage];
+            const newMessages = [...prev, progressMessage];
+            console.log('➕ New message count after addition:', newMessages.length);
+            console.log('➕ New message IDs:', newMessages.map(m => ({ id: m.id, type: m.type })));
+            console.log('➕ Added message:', progressMessage);
+            return newMessages;
           }
         });
         
@@ -2197,14 +2295,185 @@ ORDER BY total_spent DESC;
   );
 
   const renderProgressMessage = (message) => {
-    console.log('🎨 RENDER START - Full message:', message);
+    // Helper function to determine completion message based on code type
+    const getCompletionMessage = (eventType, strategy) => {
+      console.log('� getCompletionMessage called with:', { eventType, strategy });
+      console.log('🔍 Session output format:', sessionOutputFormat);
+      console.log('🔍 Component output format:', outputFormat);
+      
+      // PRIORITY 1: Check session output format (highest priority)
+      if (sessionOutputFormat) {
+        const normalizedSessionFormat = sessionOutputFormat.toLowerCase();
+        console.log('🎯 Using session output format for completion message:', normalizedSessionFormat);
+        
+        const sessionTitle = generateCompletionMessage(normalizedSessionFormat, '');
+        
+        if (normalizedSessionFormat === 'pyspark' || normalizedSessionFormat.includes('pyspark')) {
+          console.log('✅ Session format is PySpark - returning PySpark completion message');
+          return {
+            title: sessionTitle,
+            description: 'PySpark code has been generated and added to the editor.'
+          };
+        }
+        
+        if (normalizedSessionFormat === 'spark' || normalizedSessionFormat.includes('spark')) {
+          console.log('✅ Session format is Spark - returning Spark completion message');
+          return {
+            title: sessionTitle,
+            description: 'Spark code has been generated and added to the editor.'
+          };
+        }
+        
+        if (normalizedSessionFormat === 'pandas' || normalizedSessionFormat.includes('pandas')) {
+          console.log('✅ Session format is Pandas - returning Pandas completion message');
+          return {
+            title: sessionTitle,
+            description: 'Pandas code has been generated and added to the editor.'
+          };
+        }
+        
+        if (normalizedSessionFormat === 'sql' || normalizedSessionFormat.includes('sql')) {
+          console.log('✅ Session format is SQL - returning SQL completion message');
+          return {
+            title: sessionTitle,
+            description: 'SQL query has been generated and added to the editor.'
+          };
+        }
+      }
+      
+      // PRIORITY 2: Check component output format
+      if (outputFormat) {
+        const normalizedFormat = outputFormat.toLowerCase();
+        console.log('🎯 Using component output format for completion message:', normalizedFormat);
+        
+        const componentTitle = generateCompletionMessage(normalizedFormat, '');
+        
+        if (normalizedFormat === 'pyspark' || normalizedFormat.includes('pyspark')) {
+          console.log('✅ Component format is PySpark - returning PySpark completion message');
+          return {
+            title: componentTitle,
+            description: 'PySpark code has been generated and added to the editor.'
+          };
+        }
+        
+        if (normalizedFormat === 'spark' || normalizedFormat.includes('spark')) {
+          console.log('✅ Component format is Spark - returning Spark completion message');
+          return {
+            title: componentTitle,
+            description: 'Spark code has been generated and added to the editor.'
+          };
+        }
+        
+        if (normalizedFormat === 'pandas' || normalizedFormat.includes('pandas')) {
+          console.log('✅ Component format is Pandas - returning Pandas completion message');
+          return {
+            title: componentTitle,
+            description: 'Pandas code has been generated and added to the editor.'
+          };
+        }
+        
+        if (normalizedFormat === 'sql' || normalizedFormat.includes('sql')) {
+          console.log('✅ Component format is SQL - returning SQL completion message');
+          return {
+            title: componentTitle,
+            description: 'SQL query has been generated and added to the editor.'
+          };
+        }
+      }
+      
+      // PRIORITY 3: Check for PySpark-specific indicators in event/strategy
+      if (eventType?.includes('pyspark') || 
+          eventType?.includes('python') || 
+          strategy?.toLowerCase().includes('pyspark') ||
+          strategy?.toLowerCase().includes('python')) {
+        console.log('✅ Detected PySpark from event/strategy - returning PySpark completion message');
+        const pysparkTitle = generateCompletionMessage('pyspark', '');
+        return {
+          title: pysparkTitle,
+          description: 'PySpark code has been generated and added to the editor.'
+        };
+      }
+      
+      // PRIORITY 4: Check for SQL-specific indicators in event/strategy
+      if (eventType?.includes('sql') || 
+          strategy?.toLowerCase().includes('sql') ||
+          eventType?.includes('single_pass')) {
+        console.log('✅ Detected SQL from event/strategy - returning SQL completion message');
+        const sqlTitle = generateCompletionMessage('sql', '');
+        return {
+          title: sqlTitle,
+          description: 'SQL query has been generated and added to the editor.'
+        };
+      }
+      
+      // Default fallback message
+      console.log('⚠️ No specific format detected - returning generic completion message');
+      console.log('⚠️ Available data - eventType:', eventType, 'strategy:', strategy, 'sessionOutputFormat:', sessionOutputFormat, 'outputFormat:', outputFormat);
+      return {
+        title: 'Code generation completed',
+        description: 'Code has been generated and added to the editor.'
+      };
+    };
+
+    // Check if this progress message is already completed FIRST to prevent any processing
+    if (completedProgressMessages.has(message.id)) {
+      console.log('🏁 Rendering completed progress message:', message.id);
+      const { currentStage, processingStrategy: metadataStrategy } = message.metadata || {};
+      const completionMessage = getCompletionMessage(currentStage, metadataStrategy);
+      console.log('🏁 Completion message for completed progress:', completionMessage);
+      
+      return (
+        <div key={`completion-${message.id}`} className={`${colors.primary} ${colors.border} border rounded-lg p-4 my-2`}>
+          <div className="flex items-center gap-2">
+            <div className="text-green-400 text-lg">✅</div>
+            <span className={`${colors.text} font-medium`}>{completionMessage.title}</span>
+          </div>
+          <p className={`${colors.textSecondary} text-sm mt-1`}>
+            {completionMessage.description}
+          </p>
+        </div>
+      );
+    }
+
     const { eventType, processingStatus, totalFields, currentStage, stageStatus, columnTracking, fieldTracking, processingStrategy: metadataStrategy } = message.metadata || {};
     
-    console.log('🎨 RENDER - Rendering progress message with METADATA strategy:', metadataStrategy);
-    console.log('🎨 RENDER - Rendering progress message with COMPONENT strategy:', processingStrategy);
-    console.log('🎨 RENDER - Current stage:', currentStage, 'Status:', stageStatus);
-    console.log('🎨 RENDER - Full metadata:', message.metadata);
-    console.log('🎨 RENDER - Event type:', eventType);
+    // Stop rendering progress if completed to prevent infinite loops
+    if (currentStage === 'complete' && stageStatus === 'completed') {
+      console.log('🛑 Progress is complete - marking as completed and stopping render for message:', message.id);
+      
+      // Only add to completed set if not already there to prevent repeated state updates
+      if (!completedProgressMessages.has(message.id)) {
+        console.log('🛑 Adding message to completedProgressMessages Set');
+        console.log('🛑 Current completedProgressMessages size before:', completedProgressMessages.size);
+        
+        // Use setTimeout to defer state update to next tick to avoid update during render
+        setTimeout(() => {
+          setCompletedProgressMessages(prev => {
+            if (!prev.has(message.id)) {
+              const newSet = new Set(prev).add(message.id);
+              console.log('🛑 New completedProgressMessages size:', newSet.size);
+              return newSet;
+            }
+            return prev;
+          });
+        }, 0);
+      }
+      
+      const completionMessage = getCompletionMessage(currentStage, metadataStrategy);
+      console.log('🛑 Generated completion message:', completionMessage);
+      
+      return (
+        <div key={`completion-${message.id}`} className={`${colors.primary} ${colors.border} border rounded-lg p-4 my-2`}>
+          <div className="flex items-center gap-2">
+            <div className="text-green-400 text-lg">✅</div>
+            <span className={`${colors.text} font-medium`}>{completionMessage.title}</span>
+          </div>
+          <p className={`${colors.textSecondary} text-sm mt-1`}>
+            {completionMessage.description}
+          </p>
+        </div>
+      );
+    }
     
     // Use currentStage from metadata
     const activeStage = currentStage;
@@ -2952,7 +3221,7 @@ ORDER BY total_spent DESC;
               <div className="flex items-center gap-2 mb-2">
                 <span className="w-2 h-2 rounded-full bg-green-500"></span>
                 <span className={`${colors.text} text-sm font-medium`}>
-                  🎉 {completionText}
+                  {completionText}
                 </span>
               </div>
               <div className="flex items-center gap-4 text-xs text-gray-400">
@@ -3040,6 +3309,12 @@ ORDER BY total_spent DESC;
         {chatMessages.length > 0 && (
           <button
             onClick={() => {
+              console.log('🧹🚨 CLEAR BUTTON CLICKED - This will clear all messages!');
+              console.log('🧹 Messages before clear:', chatMessages.length);
+              console.log('🧹 Message types before clear:', chatMessages.reduce((acc, msg) => {
+                acc[msg.type] = (acc[msg.type] || 0) + 1;
+                return acc;
+              }, {}));
               setChatMessages([]);
               setCurrentSessionId(null);
               setSqlGenerated(false);

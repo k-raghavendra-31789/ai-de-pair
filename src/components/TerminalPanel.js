@@ -32,12 +32,12 @@ const TerminalPanel = () => {
 
   // Watch for SQL execution results from AppState and create result tabs
   useEffect(() => {
-    console.log('TerminalPanel useEffect triggered. SQL execution state:', sqlExecution);
+    // Removed console logging to prevent infinite loops
     
     if (sqlExecution.lastQuery) {
-      const { lastResults, lastQuery, lastError, isExecuting, isLoading, lastSourceFile, lastResultTabId } = sqlExecution;
+      const { lastResults, lastQuery, lastError, isExecuting, isLoading, lastSourceFile, lastResultTabId, lastConnectionType } = sqlExecution;
       
-      console.log('Processing SQL execution state:', { lastResults, lastQuery, lastError, isExecuting, isLoading, lastSourceFile, lastResultTabId });
+      // Removed console logging to prevent infinite loops
       
       // Use functional updates to avoid dependency on dataTabs
       setDataTabs(currentTabs => {
@@ -54,13 +54,18 @@ const TerminalPanel = () => {
           existingTabIndex = currentTabs.findIndex(tab => 
             tab.query === lastQuery && tab.id !== 'configure' && !tab.sourceFile
           );
-          targetTabId = existingTabIndex >= 0 ? currentTabs[existingTabIndex].id : lastResultTabId;
+          targetTabId = existingTabIndex >= 0 ? currentTabs[existingTabIndex].id : (lastResultTabId || `result-${Date.now()}`);
+        }
+        
+        // Ensure targetTabId is always defined
+        if (!targetTabId) {
+          targetTabId = `result-${Date.now()}`;
         }
         
         // Determine tab state and icon
         let tabIcon, tabState;
         if ((isExecuting || isLoading) && !lastResults && !lastError) {
-          tabIcon = '⏳';
+          tabIcon = '◐';
           tabState = 'loading';
         } else if (lastError) {
           tabIcon = '❌';
@@ -85,6 +90,7 @@ const TerminalPanel = () => {
             state: tabState,
             isExecuting: isExecuting || isLoading,
             sourceFile: lastSourceFile,
+            connectionType: lastConnectionType,
             lastUpdated: new Date().toLocaleTimeString(),
             closable: true // Ensure result tabs are closable
           };
@@ -115,11 +121,12 @@ const TerminalPanel = () => {
             state: tabState,
             isExecuting: isExecuting || isLoading,
             sourceFile: lastSourceFile,
+            connectionType: lastConnectionType,
             lastUpdated: timestamp,
             closable: true // Ensure result tabs are closable
           };
           
-          console.log('Creating new tab:', newTab);
+          // Removed console logging to prevent infinite loops
           
           // Make sure the tab is active
           setActiveTab(targetTabId);
@@ -134,7 +141,8 @@ const TerminalPanel = () => {
   useEffect(() => {
     if (state.activeConnectionId && state.dbConnections.length > 0) {
       const activeConnection = state.dbConnections.find(c => c.id === state.activeConnectionId);
-      if (activeConnection) {
+      if (activeConnection && activeConnection.type !== 'pyspark') {
+        // Only check for database connections, not PySpark connections
         // Import the service to check if token exists
         import('../services/DatabaseConnectionService').then(module => {
           const { databaseConnectionService } = module;
@@ -150,15 +158,104 @@ const TerminalPanel = () => {
     }
   }, [state.activeConnectionId, state.dbConnections]);
 
+  // Load PySpark connections from sessionStorage on component mount
+  useEffect(() => {
+    try {
+      const pysparkConnections = JSON.parse(sessionStorage.getItem('pyspark_connections') || '[]');
+      pysparkConnections.forEach(connection => {
+        // Migration fix: Ensure existing connections have the type field
+        if (!connection.type) {
+          connection.type = 'pyspark';
+          console.log('🔧 Migrated PySpark connection to include type field:', connection.name);
+        }
+        
+        // Check if this PySpark connection is already in app state
+        const existsInState = dbConnections.find(c => c.id === connection.id);
+        if (!existsInState) {
+          console.log('🐍 Loading PySpark connection from sessionStorage:', connection.name);
+          actions.addDbConnection(connection.id, connection);
+        }
+      });
+      
+      // Save back the migrated connections
+      if (pysparkConnections.some(c => c.type === 'pyspark')) {
+        sessionStorage.setItem('pyspark_connections', JSON.stringify(pysparkConnections));
+      }
+    } catch (error) {
+      console.error('🐍 Failed to load PySpark connections from sessionStorage:', error);
+    }
+  }, [dbConnections, actions]); // Include dependencies
+
   // Connection management handlers
   const addConnection = async (connectionData) => {
     try {
-      const result = await connectionManager.addConnection(connectionData, { actions });
-      setShowAddConnection(false);
-      // Show success feedback
-      return { success: true };
+      if (connectionData.type === 'pyspark') {
+        // Handle PySpark connection
+        const connectionId = `pyspark_${Date.now()}`;
+        const pysparkConnection = {
+          id: connectionId,
+          name: connectionData.name,
+          type: 'pyspark',
+          serverUrl: connectionData.serverUrl,
+          createdAt: new Date().toISOString()
+        };
+
+        // Test the PySpark connection first
+        const testResult = await testPySparkConnection(connectionData.serverUrl);
+        if (!testResult.success) {
+          return { success: false, error: testResult.error };
+        }
+
+        // Add to app state
+        actions.addDbConnection(connectionId, pysparkConnection);
+        
+        // Store in sessionStorage
+        const existingConnections = JSON.parse(sessionStorage.getItem('pyspark_connections') || '[]');
+        const updatedConnections = [...existingConnections, pysparkConnection];
+        sessionStorage.setItem('pyspark_connections', JSON.stringify(updatedConnections));
+
+        setShowAddConnection(false);
+        return { success: true };
+      } else {
+        // Handle Databricks connection (existing logic)
+        const result = await connectionManager.addConnection(connectionData, { actions });
+        setShowAddConnection(false);
+        return { success: true };
+      }
     } catch (error) {
       return { success: false, error: error.message };
+    }
+  };
+
+  // PySpark connection test function
+  const testPySparkConnection = async (serverUrl) => {
+    try {
+      console.log('🐍 Testing PySpark connection to:', serverUrl);
+      
+      // Test the connection with a simple health check
+      const response = await fetch(`${serverUrl}/health`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        // Add timeout
+        signal: AbortSignal.timeout(5000)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server responded with status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('🐍 PySpark connection test successful:', data);
+      
+      return { success: true, data };
+    } catch (error) {
+      console.error('🐍 PySpark connection test failed:', error);
+      return { 
+        success: false, 
+        error: `Failed to connect to PySpark server: ${error.message}` 
+      };
     }
   };
 
@@ -179,19 +276,48 @@ const TerminalPanel = () => {
   const testConnection = async (connectionId) => {
     try {
       setTestingConnection(connectionId);
-      // For now, testing is not implemented - just return success
+      
+      // Find the connection in the dbConnections array
+      const connection = dbConnections.find(c => c.id === connectionId);
+      if (!connection) {
+        throw new Error('Connection not found');
+      }
+
+      let result;
+      if (connection.type === 'pyspark') {
+        // Test PySpark connection
+        result = await testPySparkConnection(connection.serverUrl);
+      } else {
+        // Test Databricks connection (existing logic)
+        // For now, just return success - actual Databricks testing would go here
+        result = { success: true };
+      }
+
       setTestingConnection(null);
-      return { success: true };
+      return result;
     } catch (error) {
       setTestingConnection(null);
       return { success: false, error: error.message };
     }
   };
 
-  const deleteConnection = (connectionId) => {
+  const deleteConnection = async (connectionId) => {
     if (window.confirm('Are you sure you want to delete this connection?')) {
-      // Remove from app state
-      actions.deleteDbConnection(connectionId);
+      try {
+        // Use ConnectionManager to properly remove connection and clear tokens
+        const { ConnectionManager } = await import('../services/ConnectionManager');
+        const result = ConnectionManager.removeConnection(connectionId, actions);
+        
+        if (!result.success) {
+          console.error('Failed to delete connection:', result.error);
+          // Even if ConnectionManager fails, still try to remove from state
+          actions.deleteDbConnection(connectionId);
+        }
+      } catch (error) {
+        console.error('Error deleting connection:', error);
+        // Fallback to just removing from state
+        actions.deleteDbConnection(connectionId);
+      }
     }
   };
 
@@ -327,10 +453,16 @@ const TerminalPanel = () => {
         }
       }
       
+      // Add loading indicator to label for loading tabs (after connection logic)
+      if (tab.state === 'loading') {
+        label = `${label} (Loading...)`;
+      }
+      
       return {
         ...tab,
         label,
         icon,
+        state: tab.state, // Ensure state is passed through
         closable: dataTabs.length > 1
       };
     }),
@@ -344,19 +476,39 @@ const TerminalPanel = () => {
 
   const renderContent = () => {
     const currentTab = dataTabs.find(tab => tab.id === activeTab);
-    if (!currentTab) return null;
+    if (!currentTab) {
+      console.warn('No current tab found for activeTab:', activeTab);
+      return null;
+    }
+
+    // Removed console logging to prevent infinite render loops
+    // Only log for debugging when needed
+    // console.log('Rendering content for tab:', { ... });
 
     // If it's the configure tab, show the connection management UI
     if (currentTab.id === 'configure') {
       return renderConfigureTab();
     }
     
-    // If it's a results tab, show the tabular data
-    if (currentTab.id.startsWith('result-')) {
+    // If it's a results tab (check for result- prefix OR if it has query/results), show the tabular data
+    if ((currentTab.id && currentTab.id.startsWith('result-')) || currentTab.query || currentTab.results) {
       return renderResultsTab(currentTab);
     }
 
-    return null;
+    console.warn('Unknown tab type for tab:', currentTab);
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center">
+          <div className={`text-4xl mb-4`}>❓</div>
+          <p className={`${colors.textSecondary}`}>
+            Unknown tab type
+          </p>
+          <pre className={`text-xs ${colors.textSecondary} mt-4`}>
+            {JSON.stringify(currentTab, null, 2)}
+          </pre>
+        </div>
+      </div>
+    );
   };
 
   const renderConfigureTab = () => {
@@ -468,21 +620,44 @@ const TerminalPanel = () => {
   };
 
   const renderResultsTab = (tab) => {
+    console.log('🔍 renderResultsTab called with tab:', {
+      id: tab.id,
+      connectionType: tab.connectionType,
+      hasResults: !!tab.results,
+      results: tab.results,
+      query: tab.query
+    });
+    
     // Handle loading state
     if (tab.state === 'loading' || (tab.isExecuting && !tab.results && !tab.error)) {
       return (
         <div className="h-full flex items-center justify-center">
           <div className="text-center">
-            <div className="text-4xl mb-4 animate-spin">⏳</div>
-            <p className={`${colors.text} text-lg`}>Executing Query...</p>
-            {tab.sourceFile && (
+            <div className="text-4xl mb-4 animate-spin">◐</div>
+            <p className={`${colors.text} text-lg mb-2`}>
+              {tab.connectionType === 'pyspark' ? 'Executing PySpark Code...' : 'Executing Query...'}
+            </p>
+            <p className={`${colors.textSecondary} text-sm mb-3`}>
+              {tab.connectionType === 'pyspark' 
+                ? 'Please wait while your PySpark code is being processed'
+                : 'Please wait while your query is being executed'
+              }
+            </p>
+            {tab.sourceFile && typeof tab.sourceFile === 'string' && (
               <p className={`${colors.textSecondary} text-sm mt-1`}>
-                from {tab.sourceFile}
+                Source file: {tab.sourceFile}
               </p>
             )}
-            <p className={`${colors.textSecondary} text-sm mt-2`}>
-              {tab.query && tab.query.length > 80 ? `${tab.query.substring(0, 80)}...` : tab.query}
-            </p>
+            {tab.query && typeof tab.query === 'string' && (
+              <div className={`${colors.secondary} ${colors.border} border rounded p-3 mt-3 max-w-md mx-auto`}>
+                <p className={`${colors.textSecondary} text-xs mb-1`}>
+                  {tab.connectionType === 'pyspark' ? 'Code snippet:' : 'Query:'}
+                </p>
+                <pre className={`${colors.text} text-sm font-mono whitespace-pre-wrap break-words`}>
+                  {tab.query.length > 120 ? `${tab.query.substring(0, 120)}...` : tab.query}
+                </pre>
+              </div>
+            )}
           </div>
         </div>
       );
@@ -498,16 +673,16 @@ const TerminalPanel = () => {
               <div>
                 <h3 className={`text-lg font-semibold ${colors.text} flex items-center gap-2`}>
                   <span className="text-red-400">❌</span>
-                  Query Failed
+                  {tab.connectionType === 'pyspark' ? 'PySpark Execution Failed' : 'Query Failed'}
                   {tab.sourceFile && (
                     <span className={`text-sm ${colors.textSecondary} font-normal`}>
-                      from {tab.sourceFile}
+                      from {String(tab.sourceFile)}
                     </span>
                   )}
                 </h3>
                 {tab.query && (
                   <p className={`text-sm ${colors.textSecondary} mt-1 font-mono`}>
-                    {tab.query.length > 100 ? `${tab.query.substring(0, 100)}...` : tab.query}
+                    {String(tab.query).length > 100 ? `${String(tab.query).substring(0, 100)}...` : String(tab.query)}
                   </p>
                 )}
                 {tab.lastUpdated && (
@@ -523,9 +698,11 @@ const TerminalPanel = () => {
           <div className="flex-1 overflow-auto p-4">
             <div className="text-red-400 text-center py-8">
               <div className="text-4xl mb-4">❌</div>
-              <p className="text-lg mb-2">Query Execution Failed</p>
+              <p className="text-lg mb-2">
+                {tab.connectionType === 'pyspark' ? 'PySpark Code Execution Failed' : 'Query Execution Failed'}
+              </p>
               <div className={`${colors.secondary} ${colors.border} border rounded p-4 text-left`}>
-                <pre className="text-sm text-red-300 whitespace-pre-wrap">{tab.error}</pre>
+                <pre className="text-sm text-red-300 whitespace-pre-wrap">{String(tab.error || '')}</pre>
               </div>
             </div>
           </div>
@@ -533,19 +710,41 @@ const TerminalPanel = () => {
       );
     }
 
-    // Handle no results
-    if (!tab.results) {
+    // Handle no results - check both tab.results and tab.query.results
+    const actualResults = tab.results || tab.query?.results;
+    const actualConnectionType = tab.connectionType || tab.query?.connectionType;
+    
+    if (!actualResults) {
       return (
         <div className="h-full flex items-center justify-center">
           <div className="text-center">
             <div className={`text-4xl mb-4`}>📊</div>
             <p className={`${colors.textSecondary}`}>No results to display</p>
+            <p className={`${colors.textSecondary} text-sm mt-2`}>
+              Debug: tab.results={!!tab.results}, query.results={!!tab.query?.results}
+            </p>
           </div>
         </div>
       );
     }
 
     // Handle successful results
+    // Check if this is a PySpark result
+    console.log('🔍 Checking connection type:', actualConnectionType);
+    console.log('🔍 Actual results:', actualResults);
+    
+    if (actualConnectionType === 'pyspark') {
+      console.log('🐍 Detected PySpark result, calling renderPySparkResults');
+      // Create a modified tab object with the correct results location
+      const modifiedTab = {
+        ...tab,
+        results: actualResults,
+        connectionType: actualConnectionType
+      };
+      return renderPySparkResults(modifiedTab);
+    }
+
+    // Handle SQL results (existing logic)
     return (
       <div className="h-full flex flex-col">
         {/* Results Header - Hidden to save space */}
@@ -558,18 +757,18 @@ const TerminalPanel = () => {
                 Query Results
                 {tab.sourceFile && (
                   <span className={`text-sm ${colors.textSecondary} font-normal`}>
-                    from {tab.sourceFile}
+                    from {String(tab.sourceFile)}
                   </span>
                 )}
               </h3>
               {tab.query && (
                 <p className={`text-sm ${colors.textSecondary} mt-1 font-mono`}>
-                  {tab.query.length > 100 ? `${tab.query.substring(0, 100)}...` : tab.query}
+                  {String(tab.query).length > 100 ? `${String(tab.query).substring(0, 100)}...` : String(tab.query)}
                 </p>
               )}
               {tab.lastUpdated && (
                 <p className={`text-xs ${colors.textMuted} mt-1`}>
-                  Last updated: {tab.lastUpdated}
+                  Last updated: {String(tab.lastUpdated)}
                 </p>
               )}
             </div>
@@ -583,6 +782,215 @@ const TerminalPanel = () => {
         {/* Results Table - Now takes full height */}
         <div className="flex-1 overflow-auto p-2">
           <ResultsTable results={tab.results.results} colors={colors} />
+        </div>
+      </div>
+    );
+  };
+
+  // PySpark Results Renderer
+  const renderPySparkResults = (tab) => {
+    const pysparkData = tab.results;
+    
+    console.log('🐍 Rendering PySpark results for tab:', tab);
+    console.log('🐍 PySpark data:', pysparkData);
+    console.log('🐍 Error status:', pysparkData?.error);
+    console.log('🐍 Tab sourceFile type:', typeof tab.sourceFile, 'value:', tab.sourceFile);
+    console.log('🐍 Outputs:', pysparkData?.outputs);
+    console.log('🐍 Outputs length:', pysparkData?.outputs?.length);
+    
+    // Check if there's an error in the response
+    if (pysparkData?.error !== null && pysparkData?.error !== undefined) {
+      return (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center max-w-4xl">
+            <div className="text-4xl mb-4">❌</div>
+            <p className="text-lg mb-2 text-red-400">
+              PySpark Execution Error
+            </p>
+            {pysparkData.error?.type && (
+              <p className="text-md mb-3 text-red-300">
+                {pysparkData.error.type}
+              </p>
+            )}
+            <div className={`${colors.secondary} ${colors.border} border rounded p-4 text-left mb-4`}>
+              <h5 className="text-sm font-medium text-red-300 mb-2">Error Message:</h5>
+              <pre className="text-sm text-red-300 whitespace-pre-wrap mb-4">
+                {String(pysparkData.error?.message || pysparkData.error || 'Unknown error')}
+              </pre>
+              {pysparkData.error?.traceback && (
+                <>
+                  <h5 className="text-sm font-medium text-red-300 mb-2">Traceback:</h5>
+                  <pre className="text-xs text-red-200 whitespace-pre-wrap max-h-60 overflow-y-auto">
+                    {String(pysparkData.error.traceback)}
+                  </pre>
+                </>
+              )}
+            </div>
+            {tab.sourceFile && typeof tab.sourceFile === 'string' && (
+              <p className={`${colors.textSecondary} text-sm mt-4`}>
+                Source: {tab.sourceFile}
+              </p>
+            )}
+            {pysparkData?.execution_time && (
+              <p className={`${colors.textSecondary} text-sm mt-2`}>
+                Execution time: {String(pysparkData.execution_time)}
+              </p>
+            )}
+          </div>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="h-full flex flex-col">
+        {/* PySpark Results Header */}
+        <div className={`${colors.border} border-b p-4`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className={`text-lg font-semibold ${colors.text} flex items-center gap-2`}>
+                PySpark Execution Results
+              </h3>
+              {tab.sourceFile && typeof tab.sourceFile === 'string' && (
+                <p className={`text-sm ${colors.textSecondary} mt-1`}>
+                  File: {tab.sourceFile}
+                </p>
+              )}
+            </div>
+            <div className="text-right text-sm">
+              <div className="text-green-400 font-semibold">
+                Execution Time: {String(pysparkData?.execution_time || 'N/A')}
+              </div>
+              {pysparkData?.metadata && (
+                <div className={`${colors.textSecondary} text-xs mt-1`}>
+                  Session: {String(pysparkData.metadata.session_id || 'N/A')}<br/>
+                  Spark: {String(pysparkData.metadata.spark_version || 'N/A')}<br/>
+                  Variables: {String(pysparkData.metadata.variables_count || 'N/A')}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* PySpark Outputs */}
+        <div className="flex-1 overflow-auto p-2">
+          {pysparkData?.outputs && pysparkData.outputs.length > 0 && pysparkData.status === 'success' ? (
+            <div className="space-y-4">
+              {pysparkData.outputs
+                .filter(output => output.type !== 'statistics') // Skip statistics outputs
+                .map((output, index) => (
+                <div key={index} className={`${colors.secondary} ${colors.border} border rounded p-4`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className={`font-semibold ${colors.text} flex items-center gap-2`}>
+                      Output {index + 1} - {output.type}
+                    </h4>
+                    {output.data?.total_rows !== undefined && (
+                      <span className={`text-sm ${colors.textSecondary}`}>
+                        {output.data.total_rows?.toLocaleString()} total rows
+                        {output.data.displayed_rows && output.data.displayed_rows !== output.data.total_rows && ` (${output.data.displayed_rows} shown)`}
+                      </span>
+                    )}
+                  </div>
+                  
+                  {output.type === 'dataframe' && output.data ? (
+                    <div>
+                      {/* Data Table */}
+                      <div className="overflow-x-auto">
+                        <table className={`min-w-full ${colors.border} border`}>
+                          <thead className={`${colors.tertiary}`}>
+                            <tr>
+                              {output.data?.columns && output.data.columns.map((column, colIndex) => (
+                                <th
+                                  key={colIndex}
+                                  className={`border ${colors.border} px-4 py-2 ${colors.text} text-left text-sm font-semibold`}
+                                >
+                                  {column}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {output.data?.rows && output.data.rows.map((row, rowIndex) => (
+                              <tr
+                                key={rowIndex}
+                                className={`
+                                  hover:${colors.secondary} transition-colors
+                                  ${rowIndex % 2 === 0 ? colors.primary : colors.secondary}
+                                `}
+                              >
+                                {output.data?.columns && output.data.columns.map((column, colIndex) => (
+                                  <td
+                                    key={colIndex}
+                                    className={`
+                                      border ${colors.border} px-4 py-2 ${colors.text} text-sm
+                                      max-w-xs truncate
+                                    `}
+                                    title={String(row[colIndex])}
+                                  >
+                                    {row[colIndex] === null ? (
+                                      <span className={`${colors.textMuted} italic`}>null</span>
+                                    ) : (
+                                      String(row[colIndex])
+                                    )}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : output.type === 'statistics' ? (
+                    <div className={`${colors.tertiary} p-3 rounded`}>
+                      <h5 className={`text-sm font-medium ${colors.text} mb-2`}>Statistics:</h5>
+                      <pre className={`${colors.text} text-sm whitespace-pre-wrap font-mono`}>
+                        {typeof output.data === 'object' ? JSON.stringify(output.data, null, 2) : output.data}
+                      </pre>
+                    </div>
+                  ) : output.type === 'text' ? (
+                    <pre className={`${colors.text} text-sm whitespace-pre-wrap font-mono`}>
+                      {String(output.data || '')}
+                    </pre>
+                  ) : output.type === 'image' ? (
+                    <div className="text-center">
+                      <p className={`${colors.textSecondary} text-sm`}>
+                        Image output (not yet supported)
+                      </p>
+                    </div>
+                  ) : output.type === 'error' ? (
+                    <div className="text-red-400">
+                      <pre className="text-sm whitespace-pre-wrap">{String(output.data || '')}</pre>
+                    </div>
+                  ) : (
+                    <div className={`${colors.textSecondary} text-sm`}>
+                      Unsupported output type: {String(output.type || 'unknown')}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : pysparkData?.status === 'success' ? (
+            <div className="text-center py-8">
+              <div className={`text-4xl mb-4`}>🐍</div>
+              <p className={`${colors.textSecondary}`}>
+                PySpark code executed successfully but produced no outputs
+              </p>
+              {pysparkData?.execution_time && (
+                <p className={`${colors.textSecondary} text-sm mt-2`}>
+                  Execution time: {String(pysparkData.execution_time)}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <div className={`text-4xl mb-4`}>⚠️</div>
+              <p className={`${colors.textSecondary}`}>
+                PySpark execution completed with unknown status
+              </p>
+              <p className={`${colors.textSecondary} text-sm mt-2`}>
+                Status: {String(pysparkData?.status || 'unknown')}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -604,8 +1012,8 @@ const TerminalPanel = () => {
       <div className={`${colors.border} border-b flex items-center px-2 ${isCollapsed ? 'py-1' : ''}`}>
         <div className="flex items-center">
           {!isCollapsed ? (
-            tabs.map((tab) => (
-              <div key={tab.id} className="flex items-center">
+            tabs.map((tab, index) => (
+              <div key={tab.id || `tab-${index}`} className="flex items-center">
                 {tab.isAddButton ? (
                   <button
                     onClick={addNewDataTab}
@@ -629,7 +1037,9 @@ const TerminalPanel = () => {
                         }
                       `}
                     >
-                      <span className="text-sm">{tab.icon}</span>
+                      <span className={`text-sm ${tab.state === 'loading' ? 'animate-spin' : ''}`}>
+                        {tab.icon}
+                      </span>
                       <span>{tab.label}</span>
                     </button>
                     {tab.closable && (
@@ -652,7 +1062,9 @@ const TerminalPanel = () => {
             ))
           ) : (
             <div className={`flex items-center gap-2 px-2 text-xs ${colors.textSecondary}`}>
-              <span className="text-sm">{dataTabs.find(t => t.id === activeTab)?.icon}</span>
+              <span className={`text-sm ${dataTabs.find(t => t.id === activeTab)?.state === 'loading' ? 'animate-spin' : ''}`}>
+                {dataTabs.find(t => t.id === activeTab)?.icon}
+              </span>
               <span>{dataTabs.find(t => t.id === activeTab)?.label}</span>
             </div>
           )}
@@ -703,7 +1115,12 @@ const ConnectionCard = ({ connection, isActive, status, onActivate, onTest, onEd
           <div className={`w-2 h-2 rounded-full ${
             notTested ? 'bg-gray-500' : isConnected ? 'bg-green-500' : 'bg-red-500'
           }`}></div>
-          <h4 className={`font-medium ${colors.text} truncate text-sm`}>{connection.name}</h4>
+          <div className="flex items-center gap-1">
+            <span className="text-xs">
+              {connection.type === 'pyspark' ? '🐍' : '🧱'}
+            </span>
+            <h4 className={`font-medium ${colors.text} truncate text-sm`}>{connection.name}</h4>
+          </div>
           {isActive && (
             <span className="px-1 py-0.5 bg-blue-500 text-white rounded text-xs">Active</span>
           )}
@@ -744,12 +1161,20 @@ const ConnectionCard = ({ connection, isActive, status, onActivate, onTest, onEd
 
       {/* Compact Connection Details */}
       <div className={`text-xs ${colors.textSecondary} space-y-0.5 mb-1`}>
-        <div className="truncate">
-          <span className="font-medium">Host:</span> {connection.serverHostname}
-        </div>
-        <div className="truncate">
-          <span className="font-medium">Path:</span> {connection.httpPath}
-        </div>
+        {connection.type === 'pyspark' ? (
+          <div className="truncate">
+            <span className="font-medium">Server:</span> {connection.serverUrl}
+          </div>
+        ) : (
+          <>
+            <div className="truncate">
+              <span className="font-medium">Host:</span> {connection.serverHostname}
+            </div>
+            <div className="truncate">
+              <span className="font-medium">Path:</span> {connection.httpPath}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Compact Status */}
@@ -786,21 +1211,42 @@ const ConnectionCard = ({ connection, isActive, status, onActivate, onTest, onEd
 
 // Add Connection Modal
 const AddConnectionModal = ({ onClose, onAdd, colors }) => {
+  const [connectionType, setConnectionType] = useState('databricks'); // 'databricks' or 'pyspark'
   const [formData, setFormData] = useState({
     name: '',
     serverHostname: '',
     httpPath: '',
-    accessToken: ''
+    accessToken: '',
+    serverUrl: 'http://localhost:8000' // Default for PySpark
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  // Reset form when connection type changes
+  const handleConnectionTypeChange = (type) => {
+    setConnectionType(type);
+    setFormData({
+      name: '',
+      serverHostname: '',
+      httpPath: '',
+      accessToken: '',
+      serverUrl: type === 'pyspark' ? 'http://localhost:8000' : ''
+    });
+    setError('');
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
     setError('');
 
-    const result = await onAdd(formData);
+    // Add connection type to form data
+    const connectionData = {
+      ...formData,
+      type: connectionType
+    };
+
+    const result = await onAdd(connectionData);
     if (result.success) {
       onClose();
     } else {
@@ -812,7 +1258,42 @@ const AddConnectionModal = ({ onClose, onAdd, colors }) => {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className={`${colors.secondary} ${colors.border} border rounded-lg p-6 w-full max-w-md mx-4`}>
-        <h3 className={`text-lg font-semibold ${colors.text} mb-4`}>Add Database Connection</h3>
+        <h3 className={`text-lg font-semibold ${colors.text} mb-4`}>Add Connection</h3>
+        
+        {/* Connection Type Selection */}
+        <div className="mb-6">
+          <label className={`block text-sm font-medium ${colors.text} mb-2`}>
+            Connection Type
+          </label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => handleConnectionTypeChange('databricks')}
+              className={`
+                flex-1 py-2 px-3 rounded-md border text-sm font-medium transition-colors
+                ${connectionType === 'databricks' 
+                  ? `${colors.accentBg} text-white border-blue-500` 
+                  : `${colors.primary} ${colors.border} ${colors.text} hover:${colors.secondary}`
+                }
+              `}
+            >
+              🧱 Databricks
+            </button>
+            <button
+              type="button"
+              onClick={() => handleConnectionTypeChange('pyspark')}
+              className={`
+                flex-1 py-2 px-3 rounded-md border text-sm font-medium transition-colors
+                ${connectionType === 'pyspark' 
+                  ? `${colors.accentBg} text-white border-blue-500` 
+                  : `${colors.primary} ${colors.border} ${colors.text} hover:${colors.secondary}`
+                }
+              `}
+            >
+              🐍 PySpark
+            </button>
+          </div>
+        </div>
         
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -827,61 +1308,87 @@ const AddConnectionModal = ({ onClose, onAdd, colors }) => {
                 w-full px-3 py-2 ${colors.primary} ${colors.border} border rounded-md
                 ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500
               `}
-              placeholder="My Databricks DB"
+              placeholder={connectionType === 'databricks' ? "My Databricks DB" : "Local PySpark Server"}
               required
             />
           </div>
 
-          <div>
-            <label className={`block text-sm font-medium ${colors.text} mb-1`}>
-              Server Hostname
-            </label>
-            <input
-              type="text"
-              value={formData.serverHostname}
-              onChange={(e) => setFormData({...formData, serverHostname: e.target.value})}
-              className={`
-                w-full px-3 py-2 ${colors.primary} ${colors.border} border rounded-md
-                ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500
-              `}
-              placeholder="dbc-12345678-abcd.cloud.databricks.com"
-              required
-            />
-          </div>
+          {connectionType === 'databricks' ? (
+            // Databricks connection fields
+            <>
+              <div>
+                <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+                  Server Hostname
+                </label>
+                <input
+                  type="text"
+                  value={formData.serverHostname}
+                  onChange={(e) => setFormData({...formData, serverHostname: e.target.value})}
+                  className={`
+                    w-full px-3 py-2 ${colors.primary} ${colors.border} border rounded-md
+                    ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500
+                  `}
+                  placeholder="dbc-12345678-abcd.cloud.databricks.com"
+                  required
+                />
+              </div>
 
-          <div>
-            <label className={`block text-sm font-medium ${colors.text} mb-1`}>
-              HTTP Path
-            </label>
-            <input
-              type="text"
-              value={formData.httpPath}
-              onChange={(e) => setFormData({...formData, httpPath: e.target.value})}
-              className={`
-                w-full px-3 py-2 ${colors.primary} ${colors.border} border rounded-md
-                ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500
-              `}
-              placeholder="/sql/1.0/warehouses/abc123def456"
-              required
-            />
-          </div>
+              <div>
+                <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+                  HTTP Path
+                </label>
+                <input
+                  type="text"
+                  value={formData.httpPath}
+                  onChange={(e) => setFormData({...formData, httpPath: e.target.value})}
+                  className={`
+                    w-full px-3 py-2 ${colors.primary} ${colors.border} border rounded-md
+                    ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500
+                  `}
+                  placeholder="/sql/1.0/warehouses/abc123def456"
+                  required
+                />
+              </div>
 
-          <div>
-            <label className={`block text-sm font-medium ${colors.text} mb-1`}>
-              Access Token
-            </label>
-            <input
-              type="password"
-              value={formData.accessToken}
-              onChange={(e) => setFormData({...formData, accessToken: e.target.value})}
-              className={`
-                w-full px-3 py-2 ${colors.primary} ${colors.border} border rounded-md
-                ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500
-              `}
-              placeholder="dapi1234567890abcdef..."
-              required
-            />
-          </div>
+              <div>
+                <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+                  Access Token
+                </label>
+                <input
+                  type="password"
+                  value={formData.accessToken}
+                  onChange={(e) => setFormData({...formData, accessToken: e.target.value})}
+                  className={`
+                    w-full px-3 py-2 ${colors.primary} ${colors.border} border rounded-md
+                    ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500
+                  `}
+                  placeholder="dapi1234567890abcdef..."
+                  required
+                />
+              </div>
+            </>
+          ) : (
+            // PySpark connection fields
+            <div>
+              <label className={`block text-sm font-medium ${colors.text} mb-1`}>
+                Server URL
+              </label>
+              <input
+                type="url"
+                value={formData.serverUrl}
+                onChange={(e) => setFormData({...formData, serverUrl: e.target.value})}
+                className={`
+                  w-full px-3 py-2 ${colors.primary} ${colors.border} border rounded-md
+                  ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500
+                `}
+                placeholder="http://localhost:8000"
+                required
+              />
+              <div className={`text-xs ${colors.textMuted} mt-1`}>
+                URL of your local PySpark server
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="text-red-400 text-sm p-2 bg-red-900/20 rounded">
@@ -908,7 +1415,7 @@ const AddConnectionModal = ({ onClose, onAdd, colors }) => {
                 hover:opacity-80 transition-opacity disabled:opacity-50
               `}
             >
-              {isSubmitting ? 'Adding...' : 'Add Connection'}
+              {isSubmitting ? 'Connecting...' : 'Connect'}
             </button>
           </div>
         </form>
