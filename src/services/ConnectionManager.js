@@ -25,20 +25,25 @@ export class ConnectionManager {
         appStateContext.actions.addDbConnection(connectionMetadata.id, {
           name: connectionData.name,
           serverHostname: connectionData.serverHostname,
-          httpPath: connectionData.httpPath
+          httpPath: connectionData.httpPath,
+          type: 'databricks'
         });
         console.log('📋 ConnectionManager: Added to app state');
+        
+        // Set as active connection by default
+        appStateContext.actions.setActiveConnection(connectionMetadata.id);
+        console.log('📋 ConnectionManager: Set as active connection:', connectionMetadata.id);
       }
 
       // Store token in service
       databaseConnectionService.updateAccessToken(connectionMetadata.id, connectionData.accessToken);
       console.log('📋 ConnectionManager: Token stored for:', connectionMetadata.id);
 
-      // Store metadata in sessionStorage
-      const existingConnections = JSON.parse(sessionStorage.getItem('databricks_connections') || '[]');
+      // Store metadata in localStorage
+      const existingConnections = JSON.parse(localStorage.getItem('databricks_connections') || '[]');
       const updatedConnections = [...existingConnections, connectionMetadata];
-      sessionStorage.setItem('databricks_connections', JSON.stringify(updatedConnections));
-      console.log('📋 ConnectionManager: Metadata stored in sessionStorage');
+      localStorage.setItem('databricks_connections', JSON.stringify(updatedConnections));
+      console.log('📋 ConnectionManager: Metadata stored in localStorage');
 
       return connectionMetadata;
     } catch (error) {
@@ -195,8 +200,8 @@ export class ConnectionManager {
       // Clear all access tokens
       databaseConnectionService.clearAllTokens();
       
-      // Clear session storage
-      sessionStorage.removeItem('db_connections');
+      // Clear local storage
+      localStorage.removeItem('db_connections');
       
       // Reset state (this will be handled by the individual delete actions)
       // For now, we don't have a bulk clear action, so we'd need to add one

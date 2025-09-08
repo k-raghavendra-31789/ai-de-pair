@@ -81,10 +81,72 @@ const STORAGE_KEYS = {
   FOLDERS: 'fileExplorer_openFolders',
   EXPANDED_FOLDERS: 'fileExplorer_expandedFolders',
   FILE_HANDLES: 'fileExplorer_fileHandles',
-  DB_CONNECTIONS: 'databricks_connections', // sessionStorage key for connection metadata
-  ACTIVE_CONNECTION: 'databricks_active_connection', // sessionStorage key for active connection ID
-  FILE_CONNECTIONS: 'file_connections' // sessionStorage key for file-specific connections
+  DB_CONNECTIONS: 'databricks_connections', // localStorage key for connection metadata
+  ACTIVE_CONNECTION: 'databricks_active_connection', // localStorage key for active connection ID
+  FILE_CONNECTIONS: 'file_connections' // localStorage key for file-specific connections
 };
+
+// Migration function to move connections from sessionStorage to localStorage
+const migrateConnectionsToLocalStorage = () => {
+  try {
+    console.log('🔄 Starting connection migration from sessionStorage to localStorage...');
+    
+    // Migrate DB_CONNECTIONS
+    const sessionConnections = sessionStorage.getItem(STORAGE_KEYS.DB_CONNECTIONS);
+    const localConnections = localStorage.getItem(STORAGE_KEYS.DB_CONNECTIONS);
+    
+    if (sessionConnections && !localConnections) {
+      localStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, sessionConnections);
+      console.log('🔄 Migrated DB connections from sessionStorage to localStorage');
+    }
+
+    // Migrate ACTIVE_CONNECTION
+    const sessionActiveConnection = sessionStorage.getItem(STORAGE_KEYS.ACTIVE_CONNECTION);
+    const localActiveConnection = localStorage.getItem(STORAGE_KEYS.ACTIVE_CONNECTION);
+    
+    if (sessionActiveConnection && !localActiveConnection) {
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_CONNECTION, sessionActiveConnection);
+      console.log('🔄 Migrated active connection from sessionStorage to localStorage');
+    }
+
+    // Migrate FILE_CONNECTIONS
+    const sessionFileConnections = sessionStorage.getItem(STORAGE_KEYS.FILE_CONNECTIONS);
+    const localFileConnections = localStorage.getItem(STORAGE_KEYS.FILE_CONNECTIONS);
+    
+    if (sessionFileConnections && !localFileConnections) {
+      localStorage.setItem(STORAGE_KEYS.FILE_CONNECTIONS, sessionFileConnections);
+      console.log('🔄 Migrated file connections from sessionStorage to localStorage');
+    }
+
+    // Migrate legacy databricks_connections key
+    const legacyDatabricksConnections = sessionStorage.getItem('databricks_connections');
+    const localLegacyConnections = localStorage.getItem('databricks_connections');
+    
+    if (legacyDatabricksConnections && !localLegacyConnections) {
+      localStorage.setItem('databricks_connections', legacyDatabricksConnections);
+      console.log('🔄 Migrated legacy databricks connections from sessionStorage to localStorage');
+    }
+
+    // Log final state for debugging
+    console.log('🔄 Migration complete. Current localStorage state:');
+    console.log('  - databricks_connections:', localStorage.getItem(STORAGE_KEYS.DB_CONNECTIONS) ? 'EXISTS' : 'EMPTY');
+    console.log('  - active_connection:', localStorage.getItem(STORAGE_KEYS.ACTIVE_CONNECTION) ? 'EXISTS' : 'EMPTY');
+    console.log('  - file_connections:', localStorage.getItem(STORAGE_KEYS.FILE_CONNECTIONS) ? 'EXISTS' : 'EMPTY');
+    console.log('  - legacy databricks_connections:', localStorage.getItem('databricks_connections') ? 'EXISTS' : 'EMPTY');
+
+    // Clean up sessionStorage after migration (optional - comment out if you want to keep them)
+    // sessionStorage.removeItem(STORAGE_KEYS.DB_CONNECTIONS);
+    // sessionStorage.removeItem(STORAGE_KEYS.ACTIVE_CONNECTION);
+    // sessionStorage.removeItem(STORAGE_KEYS.FILE_CONNECTIONS);
+    // sessionStorage.removeItem('databricks_connections');
+    
+  } catch (error) {
+    console.warn('🔄 Failed to migrate connections to localStorage:', error);
+  }
+};
+
+// Run migration on module load
+migrateConnectionsToLocalStorage();
 
 // Helper function to get current content from version history
 const getCurrentContent = (memoryFile) => {
@@ -181,38 +243,41 @@ const loadExpandedFoldersFromStorage = () => {
 
 const loadDatabaseConnectionsFromStorage = () => {
   try {
-    const stored = sessionStorage.getItem(STORAGE_KEYS.DB_CONNECTIONS);
+    const stored = localStorage.getItem(STORAGE_KEYS.DB_CONNECTIONS);
+    console.log('🔍 Loading DB connections from localStorage:', stored ? 'FOUND' : 'NOT FOUND');
     if (!stored) return [];
     
     const parsed = JSON.parse(stored);
+    console.log('🔍 Parsed DB connections:', parsed.length, 'connections found');
     // Ensure we always return an array
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
-    console.warn('Failed to load database connections from sessionStorage:', error);
+    console.warn('Failed to load database connections from localStorage:', error);
     // Clear corrupted data
-    sessionStorage.removeItem(STORAGE_KEYS.DB_CONNECTIONS);
+    localStorage.removeItem(STORAGE_KEYS.DB_CONNECTIONS);
     return [];
   }
 };
 
 const loadActiveConnectionFromStorage = () => {
   try {
-    const stored = sessionStorage.getItem(STORAGE_KEYS.ACTIVE_CONNECTION);
+    const stored = localStorage.getItem(STORAGE_KEYS.ACTIVE_CONNECTION);
+    console.log('🔍 Loading active connection from localStorage:', stored || 'NOT FOUND');
     return stored || null;
   } catch (error) {
-    console.warn('Failed to load active connection from sessionStorage:', error);
-    sessionStorage.removeItem(STORAGE_KEYS.ACTIVE_CONNECTION);
+    console.warn('Failed to load active connection from localStorage:', error);
+    localStorage.removeItem(STORAGE_KEYS.ACTIVE_CONNECTION);
     return null;
   }
 };
 
 const loadFileConnectionsFromStorage = () => {
   try {
-    const stored = sessionStorage.getItem(STORAGE_KEYS.FILE_CONNECTIONS);
+    const stored = localStorage.getItem(STORAGE_KEYS.FILE_CONNECTIONS);
     return stored ? JSON.parse(stored) : {};
   } catch (error) {
-    console.warn('Failed to load file connections from sessionStorage:', error);
-    sessionStorage.removeItem(STORAGE_KEYS.FILE_CONNECTIONS);
+    console.warn('Failed to load file connections from localStorage:', error);
+    localStorage.removeItem(STORAGE_KEYS.FILE_CONNECTIONS);
     return {};
   }
 };
@@ -220,12 +285,12 @@ const loadFileConnectionsFromStorage = () => {
 const saveActiveConnectionToStorage = (connectionId) => {
   try {
     if (connectionId) {
-      sessionStorage.setItem(STORAGE_KEYS.ACTIVE_CONNECTION, connectionId);
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_CONNECTION, connectionId);
     } else {
-      sessionStorage.removeItem(STORAGE_KEYS.ACTIVE_CONNECTION);
+      localStorage.removeItem(STORAGE_KEYS.ACTIVE_CONNECTION);
     }
   } catch (error) {
-    console.warn('Failed to save active connection to sessionStorage:', error);
+    console.warn('Failed to save active connection to localStorage:', error);
   }
 };
 
@@ -279,9 +344,9 @@ const createInitialState = () => ({
   },
   
   // Database Connection State
-  dbConnections: loadDatabaseConnectionsFromStorage(), // Load from sessionStorage
-  activeConnectionId: loadActiveConnectionFromStorage(), // Load active connection from sessionStorage
-  fileConnections: loadFileConnectionsFromStorage(), // Load file-specific connections from sessionStorage
+  dbConnections: loadDatabaseConnectionsFromStorage(), // Load from localStorage
+  activeConnectionId: loadActiveConnectionFromStorage(), // Load active connection from localStorage
+  fileConnections: loadFileConnectionsFromStorage(), // Load file-specific connections from localStorage
   connectionStatus: {}, // { connectionId: { isConnected: boolean, lastChecked: Date, error: string } }
   
   // SQL Execution State
@@ -1122,10 +1187,10 @@ const appStateReducer = (state, action) => {
         lastUsed: null
       };
       
-      // Save to sessionStorage (without access_token)
-      const existingConnections = JSON.parse(sessionStorage.getItem(STORAGE_KEYS.DB_CONNECTIONS) || '[]');
+      // Save to localStorage (without access_token)
+      const existingConnections = JSON.parse(localStorage.getItem(STORAGE_KEYS.DB_CONNECTIONS) || '[]');
       const updatedConnections = [...existingConnections, connectionMetadata];
-      sessionStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(updatedConnections));
+      localStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(updatedConnections));
       
       const newState = {
         ...state,
@@ -1148,8 +1213,8 @@ const appStateReducer = (state, action) => {
         conn.id === connectionId ? { ...conn, ...updates } : conn
       );
       
-      // Update sessionStorage
-      sessionStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(updatedConnections));
+      // Update localStorage
+      localStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(updatedConnections));
       
       return {
         ...state,
@@ -1162,13 +1227,13 @@ const appStateReducer = (state, action) => {
       
       const filteredConnections = state.dbConnections.filter(conn => conn.id !== connectionId);
       
-      // Update sessionStorage for databricks connections
-      sessionStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(filteredConnections));
+      // Update localStorage for databricks connections
+      localStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(filteredConnections));
       
-      // Also clean up PySpark connections sessionStorage
-      const pysparkConnections = JSON.parse(sessionStorage.getItem('pyspark_connections') || '[]');
+      // Also clean up PySpark connections localStorage
+      const pysparkConnections = JSON.parse(localStorage.getItem('pyspark_connections') || '[]');
       const filteredPysparkConnections = pysparkConnections.filter(conn => conn.id !== connectionId);
-      sessionStorage.setItem('pyspark_connections', JSON.stringify(filteredPysparkConnections));
+      localStorage.setItem('pyspark_connections', JSON.stringify(filteredPysparkConnections));
       
       // Clear active connection if it was deleted
       const newActiveId = state.activeConnectionId === connectionId ? null : state.activeConnectionId;
@@ -1197,10 +1262,10 @@ const appStateReducer = (state, action) => {
           : conn
       );
       
-      // Update sessionStorage
-      sessionStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(updatedConnections));
+      // Update localStorage
+      localStorage.setItem(STORAGE_KEYS.DB_CONNECTIONS, JSON.stringify(updatedConnections));
       
-      // Persist active connection ID to sessionStorage
+      // Persist active connection ID to localStorage
       saveActiveConnectionToStorage(connectionId);
       
       return {
@@ -1218,8 +1283,8 @@ const appStateReducer = (state, action) => {
         [fileName]: connectionId
       };
       
-      // Persist to sessionStorage
-      sessionStorage.setItem(STORAGE_KEYS.FILE_CONNECTIONS, JSON.stringify(updatedFileConnections));
+      // Persist to localStorage
+      localStorage.setItem(STORAGE_KEYS.FILE_CONNECTIONS, JSON.stringify(updatedFileConnections));
       
       return {
         ...state,
@@ -1280,11 +1345,18 @@ const appStateReducer = (state, action) => {
         error: error,
         sourceFile: sourceFile,
         connectionType: connectionType,
-        status: error ? 'error' : 'success',
+        status: error || (results?.status === 'error') ? 'error' : 'success',
         timestamp: new Date().toLocaleTimeString(),
         isExecuting: false,
         isLoading: isLoading || false
       };
+      
+      console.log('🔥 Creating tab - error debug:', {
+        hasError: !!error,
+        resultsStatus: results?.status,
+        resultsError: !!results?.error,
+        finalStatus: error || (results?.status === 'error') ? 'error' : 'success'
+      });
       
       // Update or add tab
       const existingTabs = state.sqlExecution.resultTabs || [];
@@ -1407,14 +1479,14 @@ export const AppStateProvider = ({ children }) => {
   // Load existing Databricks connections and auto-activate first connection if none active
   useEffect(() => {
     try {
-      // Load existing Databricks connections from sessionStorage
-      const databricksConnections = JSON.parse(sessionStorage.getItem('databricks_connections') || '[]');
+      // Load existing Databricks connections from localStorage
+      const databricksConnections = JSON.parse(localStorage.getItem('databricks_connections') || '[]');
       
       databricksConnections.forEach(connection => {
         // Check if this connection is already in app state
         const existsInState = state.dbConnections.find(c => c.id === connection.id);
         if (!existsInState) {
-          console.log('🧱 Loading Databricks connection from sessionStorage:', connection.name);
+          console.log('🧱 Loading Databricks connection from localStorage:', connection.name);
           dispatch({ 
             type: ACTION_TYPES.ADD_DB_CONNECTION, 
             payload: { 
@@ -1429,7 +1501,7 @@ export const AppStateProvider = ({ children }) => {
       });
       
     } catch (error) {
-      console.error('🧱 Failed to load Databricks connections from sessionStorage:', error);
+      console.error('🧱 Failed to load Databricks connections from localStorage:', error);
     }
   }, [state.dbConnections]); // React to changes in dbConnections
   
@@ -1654,6 +1726,8 @@ export const AppStateProvider = ({ children }) => {
         
       } catch (error) {
         console.error('SQL execution error:', error);
+        console.error('SQL execution error message:', error.message);
+        console.error('SQL execution error stack:', error.stack);
         dispatch({
           type: ACTION_TYPES.SET_SQL_RESULTS,
           payload: { 

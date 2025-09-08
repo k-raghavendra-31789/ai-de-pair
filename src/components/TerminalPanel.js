@@ -34,6 +34,16 @@ const TerminalPanel = () => {
       timestamp: 'now'
     };
   }
+  
+  // Debug logging for error display (remove after testing)
+  if (displayData?.error || displayData?.results?.status === 'error') {
+    console.log('🎯 TerminalPanel error debug:', {
+      hasTopLevelError: !!displayData?.error,
+      resultsStatus: displayData?.results?.status,
+      errorType: typeof displayData?.results?.error,
+      errorKeys: displayData?.results?.error ? Object.keys(displayData?.results?.error) : 'none'
+    });
+  }
 
   // Handle tab switching
   const handleTabClick = (tabId) => {
@@ -103,7 +113,7 @@ const TerminalPanel = () => {
                 transition: 'all 0.2s ease-in-out'
               }}
             >
-              <span>{tab.id}</span>
+              <span>{String(tab.id || '')}</span>
               {tab.isExecuting && (
                 <div 
                   className="text-xs"
@@ -173,10 +183,41 @@ const TerminalPanel = () => {
                       </div>
                     )}
                   </div>
-                ) : displayData.error ? (
+                ) : displayData.error || (displayData.results?.status === 'error') ? (
                   <div className="text-red-400 bg-red-50 dark:bg-red-900/20 p-4 rounded border border-red-200 dark:border-red-800">
                     <div className="font-medium mb-2">Query Error:</div>
-                    <pre className="text-sm whitespace-pre-wrap">{displayData.error}</pre>
+                    <pre className="text-sm whitespace-pre-wrap">
+                      {(() => {
+                        // Handle different error formats
+                        if (displayData.error) {
+                          return typeof displayData.error === 'string' ? displayData.error : JSON.stringify(displayData.error);
+                        }
+                        
+                        const resultError = displayData.results?.error;
+                        if (resultError) {
+                          // If error is an object with detail
+                          if (resultError.detail) {
+                            return resultError.detail;
+                          }
+                          // If error is an object with message
+                          if (resultError.message) {
+                            return resultError.message;
+                          }
+                          // If error is an object with type and message
+                          if (resultError.type && resultError.message) {
+                            return `${resultError.type}: ${resultError.message}`;
+                          }
+                          // If error is just a string
+                          if (typeof resultError === 'string') {
+                            return resultError;
+                          }
+                          // Fallback: stringify the object
+                          return JSON.stringify(resultError);
+                        }
+                        
+                        return 'Unknown error occurred';
+                      })()}
+                    </pre>
                   </div>
                 ) : displayData.results ? (
                   <div 
@@ -221,7 +262,10 @@ const TerminalPanel = () => {
                                     <tr key={rowIndex} className={rowIndex % 2 === 0 ? colors.primary : colors.secondary}>
                                       {row.map((cell, cellIndex) => (
                                         <td key={cellIndex} className={`border ${colors.borderLight} px-3 py-2 ${colors.text}`}>
-                                          {cell}
+                                          {typeof cell === 'object' && cell !== null 
+                                            ? JSON.stringify(cell) 
+                                            : String(cell ?? '')
+                                          }
                                         </td>
                                       ))}
                                     </tr>
