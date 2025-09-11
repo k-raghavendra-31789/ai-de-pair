@@ -75,3 +75,97 @@ html, body {
 ::-webkit-scrollbar-corner {
   background: transparent;
 } 
+
+/* Responsive active states for better click feedback */
+.active\:scale-95:active {
+  transform: scale(0.95);
+}
+
+.active\:scale-98:active {
+  transform: scale(0.98);
+}
+
+/* Instant click feedback - remove transition delay on active states */
+button:active {
+  transition-duration: 0.05s !important;
+}
+
+/* Improve button responsiveness */
+button {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+/* Fast transitions for immediate feedback */
+.duration-150 {
+  transition-duration: 150ms;
+}
+
+/* Ensure click events are handled immediately */
+* {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Allow text selection where needed */
+input, textarea, [contenteditable] {
+  -webkit-user-select: text;
+  -khtml-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
+
+/* Smooth spinner animations and layout stability */
+@keyframes smoothSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Terminal panel stability improvements */
+.terminal-content {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(155, 155, 155, 0.5) transparent;
+}
+
+.terminal-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.terminal-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-content::-webkit-scrollbar-thumb {
+  background-color: rgba(155, 155, 155, 0.5);
+  border-radius: 3px;
+  border: transparent;
+}
+
+.terminal-content::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(155, 155, 155, 0.7);
+}
+
+/* Prevent layout shift during loading states */
+.loading-container {
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+/* Smooth spinner with better performance */
+.smooth-spinner {
+  animation: smoothSpin 2s linear infinite;
+  will-change: transform;
+  transform-origin: center;
+}

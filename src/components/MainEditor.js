@@ -1,11 +1,12 @@
-import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef, useMemo, memo } from 'react';
 import { useTheme } from './ThemeContext';
 import { useAppState } from '../contexts/AppStateContext';
 import CustomScrollbar from './CustomScrollbar';
 import MonacoEditor from './MonacoEditor';
 import ExcelViewer from './ExcelViewer';
 import VersionHistory from './VersionHistory';
-import { FaDownload, FaCodeBranch, FaPlay, FaGitAlt, FaCog, FaInfoCircle, FaLightbulb, FaTimes, FaCheck } from 'react-icons/fa';
+import ConnectionConfigModal from './ConnectionConfigModal';
+import { FaDownload, FaCodeBranch, FaPlay, FaGitAlt, FaCog, FaInfoCircle, FaLightbulb, FaTimes, FaCheck, FaDatabase, FaPlug, FaCheckCircle, FaExclamationTriangle } from 'react-icons/fa';
 import { BiGitPullRequest, BiGitBranch, BiGitCommit } from 'react-icons/bi';
 import { VscGithub, VscGitPullRequest } from 'react-icons/vsc';
 import { connectionManager } from '../services/ConnectionManager';
@@ -40,7 +41,8 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     restoreFileVersion = () => {},
     clearFileHistory = () => {},
     setSqlExecuting = () => {},
-    setSqlResults = () => {}
+    setSqlResults = () => {},
+    resetSqlGeneration = () => {}
   } = actions || {};
   
   // Helper function to safely access openTabs
@@ -99,6 +101,9 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   const dragTimeoutRef = useRef(null);
   const dragCounterRef = useRef(0);
   const saveTimeoutRef = useRef({});
+
+  // Database connection state
+  const [showConnectionModal, setShowConnectionModal] = useState(false);
 
   // Tab context menu and renaming state
   const [showTabContextMenu, setShowTabContextMenu] = useState(false);
@@ -631,11 +636,16 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       query: query?.substring(0, 100) + '...',
       selectedText: selectedText?.substring(0, 100),
       activeConnectionId,
+      fileConnection: activeTab?.name ? state.fileConnections?.[activeTab.name] : null,
       activeTabName: activeTab?.name,
       queryLength: query?.length
     });
 
-    if (!activeConnectionId) {
+    // Get file-specific connection or fall back to global
+    const fileConnectionId = activeTab?.name ? state.fileConnections?.[activeTab.name] : null;
+    const connectionId = fileConnectionId || activeConnectionId;
+
+    if (!connectionId) {
       console.warn('No active connection selected');
       alert('No database connection selected. Please configure a connection first.');
       return;
@@ -650,26 +660,30 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
     // Get the current file name as source identifier
     const sourceFile = activeTab?.name || null;
-    console.log('MainEditor: Executing SQL for source file:', sourceFile);
+    console.log('MainEditor: Executing SQL for source file:', sourceFile, 'using connection:', connectionId);
     console.log('SQL to execute:', sqlToExecute);
 
     // Use centralized SQL execution from AppState with source file info
     try {
-      await executeFromAppState(sqlToExecute, activeConnectionId, sourceFile);
+      await executeFromAppState(sqlToExecute, connectionId, sourceFile);
       console.log('✅ SQL execution completed');
     } catch (error) {
       console.error('❌ SQL execution failed:', error);
       alert(`SQL execution failed: ${error.message}`);
     }
-  }, [activeConnectionId, executeFromAppState, activeTab?.name]);
+  }, [activeTab?.name, state.fileConnections, activeConnectionId, executeFromAppState]);
 
   // Get active connection details
   const getActiveConnection = useCallback(() => {
+    // Get file-specific connection first, then fall back to global
+    const fileConnectionId = activeTab?.name ? state.fileConnections?.[activeTab.name] : null;
+    const connectionId = fileConnectionId || activeConnectionId;
+    
     // First check if it's a PySpark connection in sessionStorage (always check this first)
-    if (activeConnectionId?.startsWith('pyspark_')) {
+    if (connectionId?.startsWith('pyspark_')) {
       try {
         const pysparkConnections = JSON.parse(sessionStorage.getItem('pyspark_connections') || '[]');
-        const pysparkConnection = pysparkConnections.find(conn => conn.id === activeConnectionId);
+        const pysparkConnection = pysparkConnections.find(conn => conn.id === connectionId);
         if (pysparkConnection) {
           // Migrate connection if it doesn't have type field
           if (!pysparkConnection.type) {
@@ -695,7 +709,6 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
             sessionStorage.setItem('pyspark_connections', JSON.stringify(updatedConnections));
           }
           
-          // Removed logging to prevent infinite loops
           return pysparkConnection;
         }
       } catch (error) {
@@ -704,11 +717,11 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     }
 
     // Fallback to regular database connections
-    if (!activeConnectionId || !dbConnections.length) {
+    if (!connectionId || !dbConnections.length) {
       return null;
     }
-    return dbConnections.find(conn => conn.id === activeConnectionId);
-  }, [activeConnectionId, dbConnections]);
+    return dbConnections.find(conn => conn.id === connectionId);
+  }, [activeTab?.name, state.fileConnections, activeConnectionId, dbConnections]);
 
   // PySpark Execution Function
   const executePySparkCode = useCallback(async (code, selectedText = null) => {
@@ -716,6 +729,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       code: code?.substring(0, 100) + '...',
       selectedText: selectedText?.substring(0, 100),
       activeConnectionId,
+      fileConnection: activeTab?.name ? state.fileConnections?.[activeTab.name] : null,
       activeTabName: activeTab?.name,
       codeLength: code?.length
     });
@@ -739,8 +753,26 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     console.log('MainEditor: Executing PySpark code for source file:', sourceFile);
     console.log('Code to execute:', codeToExecute);
 
+    // Create file-based tab ID
+    let tabId;
+    if (sourceFile && (sourceFile.endsWith('.py') || sourceFile.endsWith('.sql'))) {
+      tabId = sourceFile.replace(/\.(py|sql)$/, '');
+    } else {
+      tabId = `result-${Date.now()}`;
+    }
+
     // Set execution state
     setSqlExecuting(true);
+    
+    // Set tab-specific executing state and create/activate the tab
+    if (actions?.setSqlTabExecuting) {
+      actions.setSqlTabExecuting(tabId, true);
+    }
+    
+    // Open terminal automatically to show loading state
+    if (actions?.toggleTerminal && !state?.isTerminalVisible) {
+      actions.toggleTerminal();
+    }
 
     try {
       // Prepare request payload
@@ -749,7 +781,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         session_id: `session_${Date.now()}`, // Generate session ID
         user_config: {}, // Optional Spark config
         include_stats: true,
-        result_limit: 100 // Default
+        result_limit: 1000 // Increased limit
       };
 
       console.log('🐍 Sending PySpark execution request:', payload);
@@ -763,35 +795,114 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         body: JSON.stringify(payload)
       });
 
+      // Log raw response details
+      console.log('🔍 BACKEND RESPONSE DETAILS:');
+      console.log('📡 Response Status:', response.status);
+      console.log('📡 Response StatusText:', response.statusText);
+      console.log('📡 Response Headers:', Object.fromEntries(response.headers.entries()));
+      console.log('📡 Response OK:', response.ok);
+      console.log('📡 Response URL:', response.url);
+
       if (!response.ok) {
         const errorText = await response.text();
+        console.log('❌ RAW ERROR RESPONSE TEXT:', errorText);
         throw new Error(`PySpark server responded with status: ${response.status}. Error: ${errorText}`);
       }
 
-      const result = await response.json();
-      console.log('🐍 PySpark execution result:', result);
+      // Get raw response text first for logging
+      const responseText = await response.text();
+      console.log('📄 RAW RESPONSE TEXT FROM BACKEND:');
+      console.log(responseText);
+      
+      // Parse the JSON
+      let result;
+      try {
+        result = JSON.parse(responseText);
+        console.log('✅ PARSED JSON RESPONSE:');
+        console.log(result);
+        console.log('🔍 Response Type:', typeof result);
+        console.log('🔍 Response Keys:', Object.keys(result || {}));
+      } catch (parseError) {
+        console.error('❌ Failed to parse JSON response:', parseError);
+        console.log('📄 Response that failed to parse:', responseText);
+        throw new Error(`Invalid JSON response from PySpark server: ${parseError.message}`);
+      }
+
+      console.log('🐍 FINAL PySpark execution result object:', result);
+
+      console.log('🐍 FINAL PySpark execution result object:', result);
+
+      // Check response status and log details
+      console.log('🔍 RESPONSE STATUS CHECK:');
+      console.log('📊 result.status:', result.status);
+      console.log('📊 Status type:', typeof result.status);
+      console.log('📊 Is status "error"?:', result.status === 'error');
 
       if (result.status === 'error') {
         // Handle error objects properly
+        console.log('❌ ERROR RESPONSE DETECTED');
+        console.log('❌ result.error:', result.error);
+        console.log('❌ Error type:', typeof result.error);
+        
         let errorMessage = 'PySpark execution failed';
         if (result.error) {
           if (typeof result.error === 'string') {
             errorMessage = result.error;
+            console.log('❌ Using string error message:', errorMessage);
           } else if (result.error.message) {
-            errorMessage = result.error.message;
+            // Handle structured error with type and message
+            const errorType = result.error.type ? `${result.error.type}: ` : '';
+            errorMessage = `${errorType}${result.error.message}`;
+            
+            // Add traceback if available (truncated for readability)
+            if (result.error.traceback) {
+              const traceback = result.error.traceback.length > 500 
+                ? result.error.traceback.substring(0, 500) + '...\n[Traceback truncated]'
+                : result.error.traceback;
+              errorMessage += `\n\nTraceback:\n${traceback}`;
+            }
+            console.log('❌ Using structured error with traceback:', errorMessage);
           } else {
             try {
               errorMessage = JSON.stringify(result.error, null, 2);
+              console.log('❌ Using JSON stringified error:', errorMessage);
             } catch (e) {
               errorMessage = `PySpark execution failed. Error: ${result.error.toString()}`;
+              console.log('❌ Using toString error:', errorMessage);
             }
           }
         }
+        
+        // Add execution time and metadata to error if available
+        if (result.execution_time) {
+          errorMessage = `Execution failed after ${result.execution_time}\n\n${errorMessage}`;
+        }
+        
         throw new Error(errorMessage);
       }
 
+      // Log successful response processing
+      console.log('✅ SUCCESS RESPONSE DETECTED');
+      console.log('📊 result.outputs:', result.outputs);
+      console.log('📊 result.metadata:', result.metadata);
+      console.log('📊 result.execution_time:', result.execution_time);
+      console.log('📊 Number of outputs:', result.outputs ? result.outputs.length : 0);
+      console.log('📊 Full result object structure:', {
+        hasOutputs: !!result.outputs,
+        hasMetadata: !!result.metadata,
+        executionTime: result.execution_time,
+        outputCount: result.outputs ? result.outputs.length : 0,
+        outputTypes: result.outputs ? result.outputs.map(output => output.type) : 'no outputs'
+      });
+
       // Set results using the existing SQL results mechanism
       // This will create a results tab in TerminalPanel
+      console.log('📤 SENDING TO setSqlResults:');
+      console.log('📤 Code:', codeToExecute);
+      console.log('📤 Result object:', result);
+      console.log('📤 Source file:', sourceFile);
+      console.log('📤 Connection type: pyspark');
+
       setSqlResults(
         codeToExecute,    // query
         result,           // results (the full PySpark response)
@@ -866,8 +977,12 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       alert(`PySpark execution failed:\n\n${errorMessage}`);
     } finally {
       setSqlExecuting(false);
+      // Clear tab-specific executing state
+      if (actions?.setSqlTabExecuting) {
+        actions.setSqlTabExecuting(tabId, false);
+      }
     }
-  }, [activeConnectionId, getActiveConnection, activeTab?.name, setSqlExecuting, setSqlResults]);
+  }, [activeTab?.name, state.fileConnections, activeConnectionId, getActiveConnection, setSqlExecuting, setSqlResults, actions, state?.isTerminalVisible]);
 
   // Handle keyboard shortcuts for saving
   useEffect(() => {
@@ -1889,25 +2004,32 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
     updateTabs(remainingTabs);
   };
 
-  const setActiveTab = (tabId) => {
-    // Before switching tabs, ensure any unsaved changes in the current active tab are persisted
-    const currentActiveTab = safeOpenTabs.find(tab => tab.isActive);
-    if (currentActiveTab?.type === 'memory' && currentActiveTab?.fileId && currentActiveTab.id !== tabId) {
-      const currentContent = fileContents[currentActiveTab.id];
-      const memoryFileContent = getCurrentMemoryFileContent(currentActiveTab.fileId);
-      
-      // If there's a difference between fileContents and memory file, update the memory file
-      if (currentContent && currentContent !== memoryFileContent) {
-        console.log('💾 Persisting unsaved changes before switching tabs:', currentActiveTab.name);
-        updateMemoryFile(currentActiveTab.fileId, currentContent, true, '🔄 Auto-save on tab switch'); // true = create version when switching
-      }
-    }
-    
+  // Optimized tab click handler
+  const handleTabClick = useCallback((tabId) => {
+    // Immediate UI feedback - update active tab right away
     const updatedTabs = safeOpenTabs.map(tab => ({
       ...tab,
       isActive: tab.id === tabId
     }));
     updateTabs(updatedTabs);
+    
+    // Handle memory file persistence asynchronously without blocking UI
+    requestAnimationFrame(() => {
+      const currentActiveTab = safeOpenTabs.find(tab => tab.isActive && tab.id !== tabId);
+      if (currentActiveTab?.type === 'memory' && currentActiveTab?.fileId) {
+        const currentContent = fileContents[currentActiveTab.id];
+        const memoryFileContent = getCurrentMemoryFileContent(currentActiveTab.fileId);
+        
+        if (currentContent && currentContent !== memoryFileContent) {
+          console.log('💾 Persisting unsaved changes before switching tabs:', currentActiveTab.name);
+          updateMemoryFile(currentActiveTab.fileId, currentContent, true, '🔄 Auto-save on tab switch');
+        }
+      }
+    });
+  }, [safeOpenTabs, updateTabs, fileContents, getCurrentMemoryFileContent, updateMemoryFile]);
+
+  const setActiveTab = (tabId) => {
+    handleTabClick(tabId);
   };
 
   const handleContentChange = (tabId, newContent) => {
@@ -2104,14 +2226,14 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               key={tab.id}
               className={`
                 flex items-center px-3 py-2 border-r ${colors.borderLight} cursor-pointer 
-                min-w-0 max-w-[200px] group relative
+                min-w-0 max-w-[200px] group relative transition-colors duration-150 active:scale-98
                 ${isDeleted ? 'opacity-60' : ''}
                 ${tab.isActive 
                   ? `${colors.primary} ${colors.text} border-t-2 ${colors.accent.replace('text-', 'border-t-')}` 
                   : `${colors.secondary} ${colors.textSecondary} ${colors.hover}`
                 }
               `}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleTabClick(tab.id)}
               onContextMenu={(e) => handleTabContextMenu(e, tab)}
               title={isDeleted ? `${tab.name} (deleted)` : tab.name}
             >
@@ -2321,14 +2443,14 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                     alert('Invalid combination: Please use a PySpark connection for Python files or a SQL connection for SQL files.');
                   }
                 }}
-                disabled={sqlExecution.isExecuting || !activeConnectionId}
-                className={`px-3 py-1 text-xs rounded flex items-center gap-1 transition-colors ${
-                  sqlExecution.isExecuting || !activeConnectionId
+                disabled={sqlExecution.isExecuting || (!activeConnectionId && !(activeTab?.name && state.fileConnections?.[activeTab.name]))}
+                className={`px-3 py-1 text-xs rounded flex items-center gap-1 transition-colors duration-150 active:scale-95 ${
+                  sqlExecution.isExecuting || (!activeConnectionId && !(activeTab?.name && state.fileConnections?.[activeTab.name]))
                     ? `bg-gray-300 text-gray-500 cursor-not-allowed opacity-50 border border-gray-300 dark:bg-gray-600 dark:text-gray-400 dark:border-gray-600` 
-                    : `bg-green-600 text-white hover:bg-green-700 border border-green-600 hover:border-green-700`
+                    : `bg-green-600 text-white hover:bg-green-700 border border-green-600 hover:border-green-700 active:bg-green-800`
                 }`}
                 title={
-                  !activeConnectionId 
+                  (!activeConnectionId && !(activeTab?.name && state.fileConnections?.[activeTab.name]))
                     ? "No connection selected. Please configure a connection first." 
                     : sqlExecution.isExecuting 
                       ? "Executing code..." 
@@ -2377,7 +2499,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
 
         {/* Theme Toggle Slider */}
         <div className={`flex items-center px-4 ${colors.borderLight} border-l`}>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
             <span className={`text-xs ${colors.textSecondary}`}>🌙</span>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -2389,6 +2511,99 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               <div className={`w-9 h-5 ${colors.quaternary} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:${colors.accentBg}`}></div>
             </label>
             <span className={`text-xs ${colors.textSecondary}`}>☀️</span>
+            
+            {/* Database Connection Selector - Larger Size */}
+            <div className="flex items-center gap-3 border-l pl-4 ml-4 border-gray-300 dark:border-gray-600">
+              {/* Connection Status Indicator - Larger */}
+              <div className="flex items-center gap-2">
+                <div className={`w-3 h-3 rounded-full ${
+                  (activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId
+                    ? 'bg-green-500' 
+                    : 'bg-red-500'
+                }`} title={
+                  (activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId
+                    ? 'Connected' 
+                    : 'Not Connected'
+                }></div>
+                <span className={`text-xs font-medium ${colors.text}`}>
+                  {(activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId ? 'Connected' : 'No Connection'}
+                </span>
+              </div>
+              
+              {/* Connection Selector Dropdown - Larger */}
+              <select
+                value={(activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId || ''}
+                onChange={(e) => {
+                  const connectionId = e.target.value;
+                  if (activeTab) {
+                    // Set file-specific connection
+                    actions.setFileConnection(activeTab.name, connectionId);
+                  } else {
+                    // Fall back to global connection
+                    actions.setActiveConnection(connectionId);
+                  }
+                }}
+                className={`text-sm px-3 py-2 rounded border ${colors.borderLight} ${colors.secondary} ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[160px] font-medium`}
+                title="Select database connection for this file"
+              >
+                <option value="">No Connection</option>
+                {dbConnections.map(conn => (
+                  <option key={conn.id} value={conn.id}>
+                    {conn.name || `${conn.type} (${conn.host})`}
+                  </option>
+                ))}
+              </select>
+              
+              {/* Quick Manage Button - Larger */}
+              <button
+                onClick={() => setShowConnectionModal(true)}
+                className={`px-3 py-2 rounded border ${colors.borderLight} ${colors.textSecondary} hover:${colors.text} hover:${colors.hover} transition-colors duration-150 active:scale-95`}
+                title="Manage connections"
+              >
+                <FaCog size={14} />
+              </button>
+            </div>
+            
+            {/* SQL Generation Control */}
+            {sqlGeneration.isActive && (
+              <div className="flex items-center gap-3 border-l pl-4 ml-4 border-gray-300 dark:border-gray-600">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-orange-500 animate-pulse" title="SQL Generation Active"></div>
+                  <span className={`text-xs font-medium ${colors.text}`}>
+                    Generating Code...
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    // Reset SQL generation state
+                    resetSqlGeneration();
+                    
+                    // Clear any persisted state that might be causing the issue
+                    try {
+                      sessionStorage.removeItem('sqlGeneration');
+                      localStorage.removeItem('sqlGeneration');
+                    } catch (e) {
+                      console.warn('Could not clear storage:', e);
+                    }
+                    
+                    // Send message to close any active SSE connections
+                    try {
+                      window.postMessage({ type: 'FORCE_CLOSE_SSE_CONNECTION' }, '*');
+                    } catch (e) {
+                      console.warn('Could not send SSE close message:', e);
+                    }
+                    
+                    console.log('🛑 SQL Generation stopped by user');
+                    console.log('🧹 Cleared any persisted generation state');
+                    console.log('📡 Requested SSE connection closure');
+                  }}
+                  className={`px-3 py-2 rounded border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-600 dark:text-red-400 dark:hover:bg-red-900 transition-colors duration-150 active:scale-95 text-xs font-medium`}
+                  title="Stop automatic code generation and close streaming connections"
+                >
+                  ⏹ Stop Generation
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -2928,6 +3143,13 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
             </div>
           </div>
         </div>
+      )}
+
+      {/* Connection Config Modal */}
+      {showConnectionModal && (
+        <ConnectionConfigModal
+          onClose={() => setShowConnectionModal(false)}
+        />
       )}
     </div>
   );

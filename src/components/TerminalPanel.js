@@ -146,33 +146,20 @@ const TerminalPanel = () => {
         <CustomScrollbar>
           <div className="h-full">
             {displayData ? (
-              <div className="p-4 h-full overflow-y-auto">
+              <div className="p-4 h-full flex flex-col min-h-0">
                 {/* Results/Error Display */}
                 {(displayData.isExecuting || displayData.isLoading) ? (
-                  <div 
-                    className={`text-center ${colors.textMuted} py-12`}
-                    style={{
-                      opacity: 1,
-                      transform: 'translateY(0)',
-                      transition: 'opacity 0.4s ease-out, transform 0.4s ease-out'
-                    }}
-                  >
+                  <div className="flex-1 flex flex-col items-center justify-center loading-container">
+                    <div className="text-4xl mb-4 smooth-spinner">⟳</div>
                     <div 
-                      className="text-4xl mb-4"
-                      style={{
-                        animation: 'spin 2s linear infinite',
-                        transition: 'all 0.3s'
-                      }}
-                    >⟳</div>
-                    <div 
-                      className="text-lg font-medium mb-2"
+                      className={`text-lg font-medium mb-2 ${colors.textMuted}`}
                       style={{
                         animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
                       }}
                     >Executing PySpark Code...</div>
-                    <div className="text-sm opacity-70">Please wait while your code is being processed</div>
+                    <div className={`text-sm opacity-70 ${colors.textMuted}`}>Please wait while your code is being processed</div>
                     {displayData.query && (
-                      <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded text-xs text-left max-w-2xl mx-auto opacity-80 transition-opacity duration-500">
+                      <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded text-xs text-left max-w-2xl opacity-80">
                         <div className="font-medium mb-1">Running:</div>
                         <pre className="whitespace-pre-wrap overflow-hidden">
                           {displayData.query.length > 200 
@@ -220,43 +207,38 @@ const TerminalPanel = () => {
                     </pre>
                   </div>
                 ) : displayData.results ? (
-                  <div 
-                    className="space-y-4"
-                    style={{
-                      opacity: 1,
-                      transform: 'translateY(0)',
-                      transition: 'opacity 0.4s ease-out, transform 0.4s ease-out'
-                    }}
-                  >
-                    {/* Only render DataFrame outputs, ignore statistics and other types */}
-                    {displayData.results?.outputs && Array.isArray(displayData.results.outputs) ? (
-                      displayData.results.outputs
-                        .filter(output => output.type === 'dataframe')
-                        .map((output, index) => {
-                          return output.data?.columns && output.data?.rows ? (
-                            <div key={index} className="overflow-auto max-h-96 border rounded">
-                              {/* Show row info */}
-                              <div className="mb-2 p-2 text-xs text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 sticky top-0">
-                                Showing {output.data.rows.length} rows
-                                {output.data.total_rows && output.data.total_rows > output.data.rows.length && (
-                                  <span> of {output.data.total_rows} total</span>
-                                )}
-                                {output.data.truncated && (
-                                  <span className="text-yellow-600 dark:text-yellow-400"> (truncated)</span>
-                                )}
-                                <span className="ml-2 text-blue-600">• Rendering {output.data.rows.length} table rows</span>
-                              </div>
-                              
-                              <table className={`w-full text-sm border-collapse border ${colors.borderLight}`}>
-                                <thead>
-                                  <tr className="bg-gray-100 dark:bg-gray-700">
-                                    {output.data.columns.map((column, colIndex) => (
-                                      <th key={colIndex} className={`border ${colors.borderLight} px-3 py-2 text-left font-medium ${colors.text} bg-gray-100 dark:bg-gray-700`}>
-                                        {column}
-                                      </th>
-                                    ))}
-                                  </tr>
-                                </thead>
+                  <div className="flex-1 overflow-y-auto min-h-0 terminal-content">
+                    <div className="space-y-4 p-2">
+                      {/* Only render DataFrame outputs, ignore statistics and other types */}
+                      {displayData.results?.outputs && Array.isArray(displayData.results.outputs) ? (
+                        displayData.results.outputs
+                          .filter(output => output.type === 'dataframe')
+                          .map((output, index) => {
+                            return output.data?.columns && output.data?.rows ? (
+                              <div key={index} className="border rounded overflow-hidden">
+                                {/* Show row info */}
+                                <div className="mb-0 p-2 text-xs text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 sticky top-0 z-10">
+                                  Showing {output.data.rows.length} rows
+                                  {output.data.total_rows && output.data.total_rows > output.data.rows.length && (
+                                    <span> of {output.data.total_rows} total</span>
+                                  )}
+                                  {output.data.truncated && (
+                                    <span className="text-yellow-600 dark:text-yellow-400"> (truncated)</span>
+                                  )}
+                                  <span className="ml-2 text-blue-600">• Rendering {output.data.rows.length} table rows</span>
+                                </div>
+                                
+                                <div className="overflow-auto max-h-80">
+                                  <table className={`w-full text-sm border-collapse border ${colors.borderLight}`}>
+                                    <thead>
+                                      <tr className="bg-gray-100 dark:bg-gray-700">
+                                        {output.data.columns.map((column, colIndex) => (
+                                          <th key={colIndex} className={`border ${colors.borderLight} px-3 py-2 text-left font-medium ${colors.text} bg-gray-100 dark:bg-gray-700`}>
+                                            {column}
+                                          </th>
+                                        ))}
+                                      </tr>
+                                    </thead>
                                 <tbody>
                                   {output.data.rows.map((row, rowIndex) => (
                                     <tr key={rowIndex} className={rowIndex % 2 === 0 ? colors.primary : colors.secondary}>
@@ -270,12 +252,14 @@ const TerminalPanel = () => {
                                       ))}
                                     </tr>
                                   ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          ) : null;
-                        })
-                    ) : null}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            ) : null;
+                          })
+                        ) : null}
+                    </div>
                   </div>
                 ) : (
                   <div className={`text-center ${colors.textMuted} py-8`}>

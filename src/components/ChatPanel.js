@@ -63,11 +63,32 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
     
     prevChatMessagesRef.current = [...chatMessages];
   }, [chatMessages]);
+  
   const [activeGenerationId, setActiveGenerationId] = useState(null);
   const [currentSessionId, setCurrentSessionId] = useState(null); // Track active session
   const [sqlGenerated, setSqlGenerated] = useState(false); // Track if SQL has been generated
   const [sseConnection, setSseConnection] = useState(null);
   const [progressData, setProgressData] = useState(null);
+  
+  // Handle force close SSE connection messages from MainEditor stop button
+  useEffect(() => {
+    const handleForceCloseSSE = (event) => {
+      if (event.data?.type === 'FORCE_CLOSE_SSE_CONNECTION') {
+        console.log('🛑 Received force close SSE message from MainEditor');
+        if (sseConnection) {
+          console.log('🔌 Closing active SSE connection...');
+          sseConnection.close();
+          setSseConnection(null);
+          console.log('✅ SSE connection forcibly closed');
+        } else {
+          console.log('ℹ️ No active SSE connection to close');
+        }
+      }
+    };
+    
+    window.addEventListener('message', handleForceCloseSSE);
+    return () => window.removeEventListener('message', handleForceCloseSSE);
+  }, [sseConnection]);
   const [completedProgressMessages, setCompletedProgressMessages] = useState(new Set()); // Track completed progress messages
   const [processingStrategy, setProcessingStrategy] = useState(null); // Store strategy selection
   const [sessionStrategy, setSessionStrategy] = useState(null); // Persist strategy for entire session
@@ -178,192 +199,6 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
     return 'SQL generation completed';
   };
 
-  // SQL Building Functions for Progressive Generation
-  const buildSqlForStage = (stage, sourceFile) => {
-    const timestamp = new Date().toISOString();
-    
-    switch (stage) {
-      case 'parsing-file':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
--- Table Structure Discovery
--- Found tables: customers, addresses, orders
--- Processing sheet: Customer_Data`;
-
-      case 'analyzing':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
--- Column Mapping Analysis
--- customers table: customer_id, customer_name, email, address_id
--- addresses table: address_id, address_line1, city, state
--- orders table: order_id, customer_id, order_date, amount
-
--- Data type analysis in progress...`;
-
-      case 'generating-joins':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
--- Building JOIN relationships
-
-SELECT 
-  -- Fields will be added in next stage
-  
-FROM raw.customers c
-LEFT JOIN raw.addresses a 
-  ON c.address_id = a.address_id
-LEFT JOIN raw.orders o 
-  ON c.customer_id = o.customer_id`;
-
-      case 'generating-select':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
-SELECT 
-  -- Customer information
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  
-  -- Address information  
-  a.address_line1,
-  a.city,
-  a.state,
-  
-  -- Order aggregations
-  COUNT(o.order_id) as total_orders,
-  SUM(o.amount) as total_spent
-  
-FROM raw.customers c
-LEFT JOIN raw.addresses a 
-  ON c.address_id = a.address_id
-LEFT JOIN raw.orders o 
-  ON c.customer_id = o.customer_id`;
-
-      case 'generating-filters':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
-SELECT 
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  a.address_line1,
-  a.city,
-  a.state,
-  COUNT(o.order_id) as total_orders,
-  SUM(o.amount) as total_spent
-  
-FROM raw.customers c
-LEFT JOIN raw.addresses a 
-  ON c.address_id = a.address_id
-LEFT JOIN raw.orders o 
-  ON c.customer_id = o.customer_id
-
-WHERE c.is_active = 1
-  AND c.created_date >= '2023-01-01'
-  AND a.country = 'US'`;
-
-      case 'combining':
-        return `-- ===================================================
--- AI-DE Generated Semantic Layer
--- Source: ${sourceFile || 'CustomerMapping.xlsx'}
--- Generated: ${timestamp}
--- ===================================================
-
-SELECT 
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  a.address_line1,
-  a.city,
-  a.state,
-  COUNT(o.order_id) as total_orders,
-  SUM(o.amount) as total_spent
-  
-FROM raw.customers c
-LEFT JOIN raw.addresses a 
-  ON c.address_id = a.address_id
-LEFT JOIN raw.orders o 
-  ON c.customer_id = o.customer_id
-
-WHERE c.is_active = 1
-  AND c.created_date >= '2023-01-01'
-  AND a.country = 'US'
-
-GROUP BY 
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  a.address_line1,
-  a.city,
-  a.state
-
-ORDER BY total_spent DESC;`;
-
-      case 'complete':
-        return `-- ===================================================
--- Customer Semantic Layer - FINAL
--- Generated by AI-DE from ${sourceFile || 'CustomerMapping.xlsx'}
--- Completion time: ${timestamp}
--- ===================================================
-
-SELECT 
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  a.address_line1,
-  a.city,
-  a.state,
-  COUNT(o.order_id) as total_orders,
-  SUM(o.amount) as total_spent
-  
-FROM raw.customers c
-LEFT JOIN raw.addresses a 
-  ON c.address_id = a.address_id
-LEFT JOIN raw.orders o 
-  ON c.customer_id = o.customer_id
-
-WHERE c.is_active = 1
-  AND c.created_date >= '2023-01-01'
-  AND a.country = 'US'
-
-GROUP BY 
-  c.customer_id,
-  c.customer_name,
-  c.email,
-  a.address_line1,
-  a.city,
-  a.state
-
-ORDER BY total_spent DESC;
-
--- Performance Notes:
--- - Consider indexing on customer_id, address_id
--- - Review date filter performance
--- - Monitor JOIN performance on large datasets`;
-
-      default:
-        return '';
-    }
-  };
 
   // SSE Connection Management
   const startSSEConnection = (sessionId, generationId) => {

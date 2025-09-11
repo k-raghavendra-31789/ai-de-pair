@@ -1559,11 +1559,11 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
   const getFileIcon = (name, type, isGitHub = false, isExpanded = false) => {
     if (type === 'folder') {
       const FolderIcon = isExpanded ? FaFolderOpen : FaFolder;
-      return <FolderIcon className={`${isGitHub ? 'text-blue-400' : 'text-yellow-500'}`} />;
+      return <FolderIcon className={`${isGitHub ? colors.accent : 'text-yellow-500'}`} />;
     }
     
     const extension = name.split('.').pop().toLowerCase();
-    const iconClass = isGitHub ? 'text-blue-400' : 'text-gray-300';
+    const iconClass = isGitHub ? colors.accent : colors.textMuted;
     
     switch (extension) {
       case 'csv': 
@@ -1576,18 +1576,18 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       case 'py': 
         return <SiPython className="text-yellow-400" />;
       case 'sql': 
-        return <FaDatabase className="text-blue-500" />;
+        return <FaDatabase className={colors.accent} />;
       case 'json': 
         return <SiJson className="text-yellow-300" />;
       case 'txt': 
       case 'log': 
-        return <FaFileAlt className="text-gray-400" />;
+        return <FaFileAlt className={colors.textMuted} />;
       case 'js': 
       case 'jsx': 
         return <SiJavascript className="text-yellow-500" />;
       case 'ts': 
       case 'tsx': 
-        return <SiTypescript className="text-blue-600" />;
+        return <SiTypescript className={colors.accent} />;
       case 'html': 
       case 'htm': 
         return <FaHtml5 className="text-orange-500" />;
@@ -1595,10 +1595,10 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       case 'scss': 
       case 'sass': 
       case 'less': 
-        return <FaCss3Alt className="text-blue-500" />;
+        return <FaCss3Alt className={colors.accent} />;
       case 'md': 
       case 'markdown': 
-        return <FaMarkdown className="text-gray-300" />;
+        return <FaMarkdown className={colors.textMuted} />;
       case 'yml': 
       case 'yaml': 
         return <FaFileCode className="text-purple-400" />;
@@ -1621,7 +1621,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
       case 'xml': 
       case 'config': 
       case 'conf': 
-        return <FaFileCode className="text-green-400" />;
+        return <FaFileCode className={colors.success} />;
       default: 
         return <FaFile className={iconClass} />;
     }
@@ -1744,7 +1744,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
                     e.stopPropagation();
                     handleReconnectFolder(item.id);
                   }}
-                  className={`ml-1 text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-0.5 rounded transition-colors`}
+                  className={`ml-1 text-xs ${colors.accentBg} hover:opacity-80 text-white px-2 py-0.5 rounded transition-colors`}
                   title="Reconnect folder - File access was lost"
                 >
                   Reconnect
@@ -1789,7 +1789,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
               draggable
               onDragStart={(e) => handleFileDragStart(e, item)}
               onContextMenu={(e) => handleContextMenu(e, item)}
-              className={`flex items-center cursor-pointer p-1 rounded transition-colors text-sm hover:bg-opacity-20 hover:bg-gray-500`}
+              className={`flex items-center cursor-pointer p-1 rounded transition-colors text-sm ${colors.hover}`}
               style={{ paddingLeft }}
             >
               <span className={`mr-2 ${colors.textMuted}`}>
@@ -1871,7 +1871,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
               <button
                 onClick={refreshWorkspace}
                 disabled={isLoadingFiles || (openFolders.length === 0 && gitHubRepos.length === 0)}
-                className={`p-1 rounded text-xs ${colors.textSecondary} hover:${colors.text} hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all ${isLoadingFiles ? 'animate-spin' : ''}`}
+                className={`p-1 rounded text-xs ${colors.textSecondary} hover:${colors.text} ${colors.hover} disabled:opacity-50 disabled:cursor-not-allowed transition-all ${isLoadingFiles ? 'animate-spin' : ''}`}
               >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M13.451 5.609l-.579-.939-1.068.812-.076-.094c-.525-.668-1.308-1.066-2.295-1.235L9.343 4h1.511l-2.016-2.048L6.822 4h1.426l.083.151c1.12.188 2.01.651 2.627 1.382l.153.188 1.065-.812.575.939-2.222 1.732c-.949-1.135-2.362-1.8-4.048-1.8-2.757 0-5 2.243-5 5s2.243 5 5 5c2.636 0 4.775-2.043 4.967-4.605h-1.032C9.338 12.129 7.822 13.2 6.001 13.2c-2.208 0-4-1.792-4-4s1.792-4 4-4c1.517 0 2.85.85 3.53 2.1l-2.084 1.622z"/>
@@ -1897,7 +1897,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
             onClick={() => setActiveTab('memory')}
             className={`px-3 py-1 text-xs transition-colors flex items-center gap-1 ${
               activeTab === 'memory' 
-                ? `${colors.accent} border-b-2 border-blue-500` 
+                ? `${colors.accent} border-b-2 ${colors.accentBg.replace('bg-', 'border-')}` 
                 : `${colors.textMuted} hover:${colors.text}`
             }`}
           >
@@ -1907,7 +1907,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
             onClick={() => setActiveTab('github')}
             className={`px-3 py-1 text-xs transition-colors flex items-center gap-1 ${
               activeTab === 'github' 
-                ? `${colors.accent} border-b-2 border-blue-500` 
+                ? `${colors.accent} border-b-2 ${colors.accentBg.replace('bg-', 'border-')}` 
                 : `${colors.textMuted} hover:${colors.text}`
             }`}
           >
@@ -1917,7 +1917,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
             onClick={() => setActiveTab('cloud')}
             className={`px-3 py-1 text-xs transition-colors flex items-center gap-1 ${
               activeTab === 'cloud' 
-                ? `${colors.accent} border-b-2 border-blue-500` 
+                ? `${colors.accent} border-b-2 ${colors.accentBg.replace('bg-', 'border-')}` 
                 : `${colors.textMuted} hover:${colors.text}`
             }`}
           >
@@ -1946,7 +1946,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
               disabled={Object.keys(memoryFiles).length === 0}
               className={`px-2 py-1 text-xs rounded ${
                 Object.keys(memoryFiles).length === 0 
-                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
+                  ? `${colors.secondary} ${colors.textMuted} cursor-not-allowed` 
                   : 'bg-red-600 hover:bg-red-700 text-white'
               } transition-colors flex-1`}
             >
@@ -2040,7 +2040,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
                         });
                       }}
                     >
-                      <span className={`w-4 h-4 mr-2 flex items-center justify-center text-xs ${file.isGenerated ? 'text-blue-400' : 'text-green-400'}`}>
+                      <span className={`w-4 h-4 mr-2 flex items-center justify-center text-xs ${file.isGenerated ? colors.accent : colors.success}`}>
                         {file.type === 'sql' ? '🗃️' : '📄'}
                       </span>
                       <span className={`text-xs flex-1 ${colors.text}`}>
@@ -2114,8 +2114,8 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
                       onClick={() => setActiveCloudProvider(provider.id)}
                       className={`px-2 py-1 text-xs border-b-2 transition-colors ${
                         activeCloudProvider === provider.id
-                          ? 'border-blue-500 text-blue-400'
-                          : 'border-transparent text-gray-400 hover:text-gray-200'
+                          ? `${colors.accentBg.replace('bg-', 'border-')} ${colors.accent}`
+                          : `border-transparent ${colors.textMuted} hover:${colors.textSecondary}`
                       }`}
                     >
                       {provider.icon} {provider.name}
@@ -2270,7 +2270,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
                   href="https://github.com/settings/tokens" 
                   target="_blank" 
                   rel="noopener noreferrer"
-                  className="text-blue-400 hover:text-blue-300 underline"
+                  className={`${colors.accent} hover:opacity-80 underline`}
                 >
                   Create token →
                 </a>
@@ -2701,7 +2701,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
               />
             </div>
 
-            <div className="text-xs text-gray-400 mb-4 p-2 bg-gray-800 rounded">
+            <div className={`text-xs ${colors.textMuted} mb-4 p-2 ${colors.secondary} rounded`}>
               💡 Tip: {selectedFileForCommit?.isMemoryFile 
                 ? 'Memory files need to be saved to disk before committing. This will show you the complete workflow.' 
                 : 'This will show you the git commands to run. For full integration, use your terminal or git client.'}
