@@ -984,6 +984,150 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
     }
   }, [activeTab?.name, state.fileConnections, activeConnectionId, getActiveConnection, setSqlExecuting, setSqlResults, actions, state?.isTerminalVisible]);
 
+  // Handle code correction with AI
+  const handleCodeCorrection = useCallback(async (selectedCode, context, userInstructions = '', correctionMode = 'fix') => {
+    console.log('🤖 Code correction requested:', {
+      selectedCode: selectedCode.substring(0, 100) + '...',
+      fileName: context.fileName,
+      language: context.language,
+      lineRange: `${context.startLine}-${context.endLine}`,
+      userInstructions: userInstructions || 'No specific instructions',
+      correctionMode: correctionMode
+    });
+
+    try {
+      // Prepare the correction request
+      const correctionRequest = {
+        code: selectedCode,
+        fileName: context.fileName,
+        language: context.language,
+        startLine: context.startLine,
+        endLine: context.endLine,
+        startColumn: context.startColumn,
+        endColumn: context.endColumn,
+        userInstructions: userInstructions || '',
+        correctionMode: correctionMode, // 'fix' or 'enhance'
+        action: userInstructions ? 'custom' : correctionMode,
+        fullFileContext: correctionMode === 'enhance' ? 
+          (activeTab?.id ? fileContents[activeTab.id] || getCurrentMemoryFileContent(activeTab.fileId) : '') : 
+          '', // Only include context for enhance mode
+        timestamp: new Date().toISOString(),
+        sessionId: `correction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      };
+
+      console.log('🚀 Sending correction request to API:', {
+        endpoint: 'http://localhost:8000/api/v1/data/correct-code',
+        request: correctionRequest
+      });
+
+      // Call the real AI correction API
+      const response = await fetch('http://localhost:8000/api/v1/data/correct-code', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(correctionRequest)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`API Error ${response.status}: ${errorData.message || 'Failed to correct code'}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ API Response received:', result);
+      
+      // Return the corrected code from the API response
+      return result.correctedCode || result.data?.correctedCode || result;
+    } catch (error) {
+      console.error('Code correction failed:', error);
+      throw error;
+    }
+  }, [activeTab, fileContents, getCurrentMemoryFileContent]);
+
+  // Simulate AI correction (replace with actual API call)
+  const simulateAICorrection = async (request) => {
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        let correctedCode = request.code;
+        
+        if (request.correctionMode === 'fix') {
+          // SURGICAL FIX MODE: Only fix obvious errors, typos, syntax issues
+          if (request.language === 'sql') {
+            // Fix common SQL typos and basic syntax
+            correctedCode = correctedCode
+              .replace(/SELCT/gi, 'SELECT')
+              .replace(/FORM/gi, 'FROM')
+              .replace(/WHRE/gi, 'WHERE')
+              .replace(/;$/, ';') // Fix semicolon at end
+              .trim();
+          } else if (request.language === 'python') {
+            // Fix Python syntax errors
+            correctedCode = correctedCode
+              .replace(/pint\(/g, 'print(') // Fix typo
+              .replace(/dfe\s+/g, 'def ') // Fix typo
+              .replace(/:\s*$/, ':') // Fix colon spacing
+              .trim();
+          } else if (request.language === 'javascript') {
+            // Fix JS syntax errors
+            correctedCode = correctedCode
+              .replace(/consol\.log/g, 'console.log') // Fix typo
+              .replace(/fucntion/g, 'function') // Fix typo
+              .trim();
+          }
+          
+        } else if (request.correctionMode === 'enhance') {
+          // SMART ENHANCE MODE: Use context for comprehensive improvements
+          if (request.language === 'sql') {
+            // Enhanced SQL with formatting and optimization
+            correctedCode = correctedCode
+              .replace(/select\s+\*/gi, 'SELECT *')
+              .replace(/\bfrom\b/gi, 'FROM')
+              .replace(/\bwhere\b/gi, 'WHERE')
+              .replace(/\band\b/gi, 'AND')
+              .replace(/\bor\b/gi, 'OR')
+              .replace(/\blimit\b/gi, 'LIMIT');
+            
+            // Add optimization suggestions based on context
+            if (request.fullFileContext.includes('users') && correctedCode.includes('SELECT *')) {
+              correctedCode = correctedCode.replace(/SELECT \*/, 'SELECT id, name, email, status');
+            }
+            
+          } else if (request.language === 'python') {
+            // Enhanced Python with best practices
+            if (correctedCode.includes('for') && !correctedCode.includes('enumerate')) {
+              correctedCode = `# Enhanced with enumerate for better indexing\n${correctedCode}`;
+            }
+          }
+        }
+        
+        // Handle custom user instructions
+        if (request.userInstructions) {
+          if (request.userInstructions.toLowerCase().includes('comment')) {
+            if (request.language === 'sql') {
+              correctedCode = `-- ${request.userInstructions}\n${correctedCode}`;
+            } else if (request.language === 'python') {
+              correctedCode = `# ${request.userInstructions}\n${correctedCode}`;
+            } else {
+              correctedCode = `// ${request.userInstructions}\n${correctedCode}`;
+            }
+          }
+        }
+        
+        // If no changes were made in fix mode, just clean up whitespace
+        if (correctedCode === request.code && request.correctionMode === 'fix') {
+          correctedCode = request.code.trim();
+        }
+        
+        resolve({ 
+          correctedCode,
+          mode: request.correctionMode,
+          hasChanges: correctedCode !== request.code
+        });
+      }, 1500);
+    });
+  };
+
   // Handle keyboard shortcuts for saving
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -1737,10 +1881,14 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
   useEffect(() => {
     const handleKeyDown = (event) => {
       // Check if we're in a SQL file and user pressed Ctrl+Enter (or Cmd+Enter on Mac)
+      // BUT skip if code correction toolbar is active (to avoid conflicts)
+      const isCorrectionToolbarActive = document.querySelector('[data-correction-toolbar="true"]');
+      
       if (
         activeTab?.name.toLowerCase().endsWith('.sql') &&
         (event.ctrlKey || event.metaKey) &&
-        event.key === 'Enter'
+        event.key === 'Enter' &&
+        !isCorrectionToolbarActive // Don't trigger SQL execution if correction toolbar is active
       ) {
         event.preventDefault();
         
@@ -2733,6 +2881,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                           fileName="preview.md"
                           onSave={(content) => saveFileContent(activeTab?.name, content)}
                           onGitCommit={handleGitCommit}
+                          onCodeCorrection={handleCodeCorrection}
                           wordWrap={wordWrap}
                         />
                       </div>
@@ -2757,6 +2906,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                           fileName="preview.md"
                           onSave={(content) => saveFileContent(activeTab?.name, content)}
                           onGitCommit={handleGitCommit}
+                          onCodeCorrection={handleCodeCorrection}
                           wordWrap={wordWrap}
                         />
                       </div>
@@ -2780,6 +2930,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                           fileName={activeTab?.name}
                           onSave={(content) => saveFileContent(activeTab?.name, content)}
                           onGitCommit={handleGitCommit}
+                          onCodeCorrection={handleCodeCorrection}
                           wordWrap={wordWrap}
                         />
                       </div>
@@ -2793,6 +2944,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                         fileName={activeTab?.name}
                         onSave={(content) => saveFileContent(activeTab?.name, content)}
                         onGitCommit={handleGitCommit}
+                        onCodeCorrection={handleCodeCorrection}
                         wordWrap={wordWrap}
                       />
                     );
