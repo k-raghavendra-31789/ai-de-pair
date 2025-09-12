@@ -669,7 +669,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       console.log('✅ SQL execution completed');
     } catch (error) {
       console.error('❌ SQL execution failed:', error);
-      alert(`SQL execution failed: ${error.message}`);
+      // Error is already displayed in TerminalPanel, no need for alert
     }
   }, [activeTab?.name, state.fileConnections, activeConnectionId, executeFromAppState]);
 
@@ -974,7 +974,7 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         'pyspark'         // connectionType
       );
       
-      alert(`PySpark execution failed:\n\n${errorMessage}`);
+      // Error is already displayed in TerminalPanel, no need for alert
     } finally {
       setSqlExecuting(false);
       // Clear tab-specific executing state

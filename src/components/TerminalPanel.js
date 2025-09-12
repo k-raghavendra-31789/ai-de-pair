@@ -171,9 +171,9 @@ const TerminalPanel = () => {
                     )}
                   </div>
                 ) : displayData.error || (displayData.results?.status === 'error') ? (
-                  <div className="text-red-400 bg-red-50 dark:bg-red-900/20 p-4 rounded border border-red-200 dark:border-red-800">
-                    <div className="font-medium mb-2">Query Error:</div>
-                    <pre className="text-sm whitespace-pre-wrap">
+                  <div className="text-red-400 bg-red-50 dark:bg-red-900/20 p-4 rounded border border-red-200 dark:border-red-800 select-text error-text">
+                    <div className="font-medium mb-2 select-text">Query Error:</div>
+                    <pre className="text-sm whitespace-pre-wrap select-text cursor-text error-text" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
                       {(() => {
                         // Handle different error formats
                         if (displayData.error) {
@@ -233,7 +233,7 @@ const TerminalPanel = () => {
                                     <thead>
                                       <tr className="bg-gray-100 dark:bg-gray-700">
                                         {output.data.columns.map((column, colIndex) => (
-                                          <th key={colIndex} className={`border ${colors.borderLight} px-3 py-2 text-left font-medium ${colors.text} bg-gray-100 dark:bg-gray-700`}>
+                                          <th key={colIndex} className={`border ${colors.borderLight} px-3 py-2 text-left font-medium ${colors.text} bg-gray-100 dark:bg-gray-700 select-text`}>
                                             {column}
                                           </th>
                                         ))}
@@ -243,7 +243,7 @@ const TerminalPanel = () => {
                                   {output.data.rows.map((row, rowIndex) => (
                                     <tr key={rowIndex} className={rowIndex % 2 === 0 ? colors.primary : colors.secondary}>
                                       {row.map((cell, cellIndex) => (
-                                        <td key={cellIndex} className={`border ${colors.borderLight} px-3 py-2 ${colors.text}`}>
+                                        <td key={cellIndex} className={`border ${colors.borderLight} px-3 py-2 ${colors.text} select-text`}>
                                           {typeof cell === 'object' && cell !== null 
                                             ? JSON.stringify(cell) 
                                             : String(cell ?? '')
