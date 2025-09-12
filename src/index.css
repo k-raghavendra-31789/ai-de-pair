@@ -120,6 +120,24 @@ input, textarea, [contenteditable] {
   user-select: text;
 }
 
+/* Allow text selection for specific elements that need to be copyable */
+.select-text, .selectable-text {
+  -webkit-user-select: text !important;
+  -khtml-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
+  user-select: text !important;
+}
+
+/* Make error messages and code blocks selectable */
+pre, code, .error-text, .terminal-content {
+  -webkit-user-select: text !important;
+  -khtml-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
+  user-select: text !important;
+}
+
 /* Smooth spinner animations and layout stability */
 @keyframes smoothSpin {
   from {
