@@ -150,6 +150,112 @@ pre, code, .error-text, .terminal-content {
 
 /* Terminal panel stability improvements */
 .terminal-content {
+  scroll-behavior: smooth;
+}
+
+/* Enhanced terminal scrollbar for large datasets */
+.terminal-scrollbar {
+  scroll-behavior: smooth;
+}
+
+.terminal-scrollbar::-webkit-scrollbar {
+  width: 12px;
+  background: transparent;
+}
+
+.terminal-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  transition: all 0.3s ease;
+}
+
+.terminal-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.terminal-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Better table scrolling for large datasets */
+.terminal-content table {
+  scroll-margin-top: 1rem;
+}
+
+/* Improve keyboard navigation */
+.terminal-content:focus-within {
+  scroll-behavior: smooth;
+}
+
+/* Performance optimization for large tables */
+.terminal-content table tbody {
+  contain: layout style;
+}
+
+/* Terminal table container optimizations */
+.terminal-table-container {
+  overflow: auto;
+  max-height: none; /* Remove height restriction */
+  /* GPU acceleration for smoother scrolling */
+  transform: translateZ(0);
+  will-change: scroll-position;
+}
+
+/* Sticky headers for better navigation */
+.terminal-data-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: blur(8px);
+}
+
+/* Row highlighting for better readability */
+.terminal-data-table tbody tr:hover {
+  background-color: rgba(59, 130, 246, 0.1);
+  transition: background-color 0.15s ease;
+}
+
+/* Optimize text rendering for large datasets */
+.terminal-data-table td {
+  text-rendering: optimizeSpeed;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Better scrollbar for table containers */
+.terminal-table-container::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.terminal-table-container::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.5);
+  border-radius: 4px;
+}
+
+.terminal-table-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.8);
+}
+
+/* Scroll to top button animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Smoother scrolling on wheel events */
+.terminal-scrollbar {
+  scroll-behavior: smooth;
+  overscroll-behavior: contain;
+}
+.terminal-content {
   scrollbar-width: thin;
   scrollbar-color: rgba(155, 155, 155, 0.5) transparent;
 }
