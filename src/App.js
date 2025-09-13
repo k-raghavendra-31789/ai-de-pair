@@ -85,7 +85,9 @@ const VSCodeInterface = () => {
     
     const handleMouseMove = (e) => {
       const containerHeight = containerRef.current?.offsetHeight || 800;
-      const newHeight = Math.max(100, Math.min(400, containerHeight - e.clientY));
+      const windowHeight = window.innerHeight;
+      const maxHeight = Math.floor(windowHeight * 0.8); // Allow up to 80% of window height
+      const newHeight = Math.max(100, Math.min(maxHeight, containerHeight - e.clientY));
       actions.setPanelSizes({ bottomPanelHeight: newHeight });
     };
     
