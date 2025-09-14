@@ -1020,26 +1020,47 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         request: correctionRequest
       });
 
-      // Call the real AI correction API
-      const response = await fetch('http://localhost:8000/api/v1/data/correct-code', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(correctionRequest)
-      });
+      // Create AbortController for timeout handling
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 60000); // 60 second timeout (increased from 30s)
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(`API Error ${response.status}: ${errorData.message || 'Failed to correct code'}`);
+      try {
+        // Call the real AI correction API with timeout
+        const response = await fetch('http://localhost:8000/api/v1/data/correct-code', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(correctionRequest),
+          signal: controller.signal // Add abort signal for timeout
+        });
+
+        clearTimeout(timeoutId); // Clear timeout if request completes
+
+        clearTimeout(timeoutId); // Clear timeout if request completes
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(`API Error ${response.status}: ${errorData.message || 'Failed to correct code'}`);
+        }
+
+        const result = await response.json();
+        console.log('✅ API Response received:', result);
+        
+        // Return the corrected code from the API response
+        return result.correctedCode || result.data?.correctedCode || result;
+      } finally {
+        clearTimeout(timeoutId); // Ensure timeout is always cleared
       }
-
-      const result = await response.json();
-      console.log('✅ API Response received:', result);
-      
-      // Return the corrected code from the API response
-      return result.correctedCode || result.data?.correctedCode || result;
     } catch (error) {
+      // Handle timeout errors specifically
+      if (error.name === 'AbortError') {
+        console.error('⏰ Request timeout: AI service took too long to respond');
+        throw new Error('Request timeout: The AI service is taking longer than expected. Please try with a smaller code selection or try again later.');
+      }
+      
       console.error('Code correction failed:', error);
       throw error;
     }
@@ -2365,6 +2386,15 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Tab Bar */}
       <div className={`${colors.secondary} ${colors.border} border-b flex items-center relative flex-shrink-0`}>
+        {/* Logo */}
+        <div className="flex items-center px-3 py-2 flex-shrink-0">
+          <img 
+            src="/logo.png" 
+            alt="Logo" 
+            className="h-6 w-auto opacity-80 hover:opacity-100 transition-opacity duration-200"
+          />
+        </div>
+        
         {/* Tabs Container */}
         <div className="flex items-center flex-1 overflow-x-auto">
           {safeOpenTabs.map((tab) => {
@@ -2782,7 +2812,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
           // Welcome Screen
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center p-6 max-w-2xl">
-              <div className={`text-lg mb-4 ${colors.text}`}>Welcome to AI-DE Editor</div>
+              <div className={`text-lg mb-4 ${colors.text}`}>DataMonk AI-powered Data Engineering assistant</div>
               <div className={`space-y-2 text-sm ${colors.textMuted}`}>
                 <div>Toggle Terminal: Ctrl + `</div>
                 <div className="mt-4 text-xs">
