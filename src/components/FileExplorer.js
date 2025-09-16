@@ -2552,7 +2552,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
                   onMouseEnter={(e) => e.target.style.backgroundColor = '#37373d'}
                   onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
                 >
-                  <FaCodeBranch size={12} />
+                  <FaGithub size={12} />
                   Git Commit
                 </button>
               </>
@@ -2674,7 +2674,7 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className={`${colors.background} ${colors.border} border rounded-lg p-6 w-96 max-w-md`}>
             <h3 className={`text-lg font-semibold ${colors.text} mb-4 flex items-center gap-2`}>
-              <FaCodeBranch className="text-blue-400" />
+              <FaGithub className="text-blue-400" />
               Git Commit
             </h3>
             
