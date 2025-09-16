@@ -69,6 +69,7 @@ const ACTION_TYPES = {
   SET_SQL_EXECUTING: 'SET_SQL_EXECUTING',
   SET_ACTIVE_SQL_TAB: 'SET_ACTIVE_SQL_TAB',
   SET_SQL_TAB_EXECUTING: 'SET_SQL_TAB_EXECUTING',
+  REMOVE_SQL_TAB: 'REMOVE_SQL_TAB',
   
   // UI State
   SET_PANEL_SIZES: 'SET_PANEL_SIZES',
@@ -1454,6 +1455,40 @@ const appStateReducer = (state, action) => {
       };
     }
 
+    case ACTION_TYPES.REMOVE_SQL_TAB: {
+      const tabIdToRemove = action.payload;
+      console.log('AppStateContext: Removing SQL tab:', tabIdToRemove);
+      
+      const existingTabs = state.sqlExecution.resultTabs || [];
+      const updatedTabs = existingTabs.filter(tab => tab.id !== tabIdToRemove);
+      
+      // If we're removing the active tab, set a new active tab
+      let newActiveTabId = state.sqlExecution.activeTabId;
+      if (newActiveTabId === tabIdToRemove) {
+        // Set the active tab to the first remaining tab, or null if no tabs left
+        newActiveTabId = updatedTabs.length > 0 ? updatedTabs[0].id : null;
+      }
+      
+      // Clear lastResults and related data if this is the last tab being removed
+      const sqlExecutionUpdate = {
+        ...state.sqlExecution,
+        resultTabs: updatedTabs,
+        activeTabId: newActiveTabId
+      };
+      
+      // If no tabs remain, clear the fallback data
+      if (updatedTabs.length === 0) {
+        sqlExecutionUpdate.lastResults = null;
+        sqlExecutionUpdate.lastError = null;
+        sqlExecutionUpdate.lastQuery = '';
+      }
+      
+      return {
+        ...state,
+        sqlExecution: sqlExecutionUpdate
+      };
+    }
+
     default:
       return state;
   }
@@ -1766,6 +1801,10 @@ export const AppStateProvider = ({ children }) => {
     setSqlTabExecuting: (tabId, isExecuting) => dispatch({
       type: ACTION_TYPES.SET_SQL_TAB_EXECUTING,
       payload: { tabId, isExecuting }
+    }),
+    removeSqlTab: (tabId) => dispatch({
+      type: ACTION_TYPES.REMOVE_SQL_TAB,
+      payload: tabId
     }),
   };
   

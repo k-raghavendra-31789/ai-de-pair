@@ -2258,9 +2258,8 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
       console.log('🏁 Completion message for completed progress:', completionMessage);
       
       return (
-        <div key={`completion-${message.id}`} className={`${colors.primary} ${colors.border} border rounded-lg p-4 my-2`}>
+        <div key={`completion-${message.id}`} className="bg-gray-700 border-gray-600 border rounded-lg p-4 my-2">
           <div className="flex items-center gap-2">
-            <div className="text-green-400 text-lg">✅</div>
             <span className={`${colors.text} font-medium`}>{completionMessage.title}</span>
           </div>
           <p className={`${colors.textSecondary} text-sm mt-1`}>

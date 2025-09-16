@@ -7,7 +7,7 @@ import ExcelViewer from './ExcelViewer';
 import VersionHistory from './VersionHistory';
 import ConnectionConfigModal from './ConnectionConfigModal';
 import { FaDownload, FaCodeBranch, FaPlay, FaGitAlt, FaCog, FaInfoCircle, FaLightbulb, FaTimes, FaCheck, FaDatabase, FaPlug, FaCheckCircle, FaExclamationTriangle } from 'react-icons/fa';
-import { BiGitPullRequest, BiGitBranch, BiGitCommit } from 'react-icons/bi';
+import { BiGitPullRequest, BiGitBranch } from 'react-icons/bi';
 import { VscGithub, VscGitPullRequest } from 'react-icons/vsc';
 import { connectionManager } from '../services/ConnectionManager';
 
@@ -3022,11 +3022,11 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
           <div className={`${colors.primary} rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden border ${colors.borderLight}`}>
             
             {/* Header */}
-            <div className={`px-6 py-5 border-b ${colors.borderLight} bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-gray-800 dark:to-gray-900`}>
+            <div className={`px-6 py-5 border-b ${colors.borderLight} ${colors.secondary}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${createPR ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'} dark:bg-opacity-20`}>
-                    {createPR ? <VscGitPullRequest size={20} /> : <BiGitCommit size={20} />}
+                  <div className={`p-2 rounded-lg ${colors.tertiary}`}>
+                    {createPR ? <VscGitPullRequest size={20} className="text-gray-400" /> : <VscGithub size={20} className="text-gray-400" />}
                   </div>
                   <div>
                     <h3 className={`text-lg font-semibold ${colors.text}`}>
@@ -3067,7 +3067,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               <div className={`p-4 rounded-lg border ${colors.borderLight} ${colors.secondary}`}>
                 <label className="flex items-center justify-between cursor-pointer">
                   <div className="flex items-center gap-3">
-                    <VscGitPullRequest className="text-green-500" size={20} />
+                    <VscGitPullRequest className="text-gray-400" size={20} />
                     <div>
                       <div className={`font-medium ${colors.text}`}>Create Pull Request</div>
                       <div className={`text-sm ${colors.textMuted}`}>Create a PR for code review</div>
@@ -3077,7 +3077,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                     type="checkbox"
                     checked={createPR}
                     onChange={(e) => setCreatePR(e.target.checked)}
-                    className="w-5 h-5 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500"
+                    className="w-5 h-5 text-gray-600 bg-gray-700 border-gray-600 rounded focus:ring-gray-500"
                   />
                 </label>
               </div>
@@ -3086,7 +3086,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               {createPR && (
                 <div className={`border ${colors.borderLight} rounded-lg p-5 space-y-4 ${colors.tertiary}`}>
                   <div className="flex items-center gap-2 mb-4">
-                    <FaCog className={theme === 'dark' ? 'text-blue-400' : 'text-blue-600'} size={16} />
+                    <FaCog className="text-gray-400" size={16} />
                     <h4 className={`font-medium ${colors.text}`}>Pull Request Configuration</h4>
                   </div>
                   
@@ -3112,11 +3112,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                             <button
                               key={example}
                               onClick={() => setBranchName(example)}
-                              className={`px-3 py-1 text-xs rounded-full transition-all ${
-                                theme === 'dark' 
-                                  ? 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
-                                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300'
-                              }`}
+                              className="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600 transition-all"
                               type="button"
                             >
                               {example}
@@ -3190,9 +3186,9 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               )}
 
               {/* Info Panel */}
-              <div className={`p-4 rounded-lg border-l-4 border-blue-500 ${colors.tertiary}`}>
+              <div className={`p-4 rounded-lg border-l-4 border-gray-600 ${colors.tertiary}`}>
                 <div className="flex items-start gap-3">
-                  <FaLightbulb className="text-blue-500 mt-0.5" size={16} />
+                  <FaLightbulb className="text-gray-400 mt-0.5" size={16} />
                   <div>
                     <div className={`text-sm font-medium ${colors.text}`}>
                       {createPR ? 'Pull Request Workflow' : 'Direct Commit'}
@@ -3221,8 +3217,8 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                 disabled={!commitMessage.trim() || isCommitting}
                 className={`px-6 py-3 text-sm font-medium text-white rounded-lg transition-all ${
                   !commitMessage.trim() || isCommitting
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-blue-600 hover:bg-blue-700 shadow-lg hover:shadow-xl'
+                    ? 'bg-gray-600 cursor-not-allowed'
+                    : 'bg-gray-700 hover:bg-gray-600'
                 } flex items-center gap-2`}
               >
                 {isCommitting ? (
@@ -3232,7 +3228,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                   </>
                 ) : (
                   <>
-                    {createPR ? <VscGitPullRequest size={16} /> : <BiGitCommit size={16} />}
+                    {createPR ? <VscGitPullRequest size={16} /> : <VscGithub size={16} />}
                     {createPR ? 'Create PR' : 'Commit'}
                   </>
                 )}

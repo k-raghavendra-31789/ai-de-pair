@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTheme } from './ThemeContext';
 import { useAppState } from '../contexts/AppStateContext';
-import ResizeHandle from './ResizeHandle';
+import { IoClose, IoTerminal } from 'react-icons/io5';
 
-const TerminalPanel = () => {
+const TerminalPanel = ({ onHeaderMouseDown }) => {
   const { colors } = useTheme();
   const { state, actions } = useAppState();
   
@@ -71,62 +71,36 @@ const TerminalPanel = () => {
     }
   };
 
-  // Handle resizing
-  const handleMouseDown = (e) => {
-    if (!setResizing) return;
-    
-    e.preventDefault();
-    setResizing(true);
-    
-    const startY = e.clientY;
-    const startHeight = height;
-    const windowHeight = window.innerHeight;
-    const maxHeight = Math.floor(windowHeight * 0.8); // Allow up to 80% of window height
-    const minHeight = 100;
-    
-    const handleMouseMove = (e) => {
-      const deltaY = startY - e.clientY;
-      const newHeight = Math.max(minHeight, Math.min(maxHeight, startHeight + deltaY));
-      
-      if (setPanelSizes) {
-        setPanelSizes(prev => ({
-          ...prev,
-          bottomPanelHeight: newHeight
-        }));
-      }
-    };
-    
-    const handleMouseUp = () => {
-      setResizing(false);
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-    
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+  // Handle tab removal
+  const handleTabClose = (tabId, event) => {
+    event.stopPropagation(); // Prevent tab switching when closing
+    if (actions?.removeSqlTab) {
+      actions.removeSqlTab(tabId);
+    }
   };
 
   if (!isTerminalVisible) return null;
 
   return (
     <div 
-      className={`border-t ${colors.borderLight} ${colors.primary} flex flex-col ${isResizing ? 'select-none' : ''}`}
+      className={`border-t ${colors.borderLight} ${colors.primary} flex flex-col ${isResizing ? 'select-none cursor-row-resize' : ''}`}
       style={{ 
         height: `${height}px`,
-        transition: 'all 0.3s ease-in-out'
+        transition: isResizing ? 'none' : 'all 0.3s ease-in-out'
       }}
     >
-      {/* Resize Handle */}
-      <ResizeHandle onMouseDown={handleMouseDown} />
-      
-      {/* Header with tabs */}
-      <div className={`flex items-center justify-between px-4 py-2 border-b ${colors.borderLight} ${colors.secondary}`}>
+      {/* Header with tabs - draggable for resizing */}
+      <div 
+        className={`flex items-center justify-between px-4 py-2 border-b ${colors.borderLight} ${colors.secondary} cursor-row-resize hover:bg-gray-600/50 select-none`}
+        onMouseDown={onHeaderMouseDown}
+        title="Drag to resize terminal panel"
+        style={{ userSelect: 'none' }}
+      >
         <div className="flex gap-2 overflow-x-auto">
           {tabs.map((tab) => (
-            <button
+            <div
               key={tab.id}
-              onClick={() => handleTabClick(tab.id)}
-              className={`px-3 py-1 text-sm rounded-t border-b-2 whitespace-nowrap flex items-center gap-2 ${
+              className={`px-3 py-1 text-sm rounded-t border-b-2 whitespace-nowrap flex items-center gap-2 group cursor-pointer ${
                 tab.id === activeTabId
                   ? `${colors.text} border-blue-400 dark:border-blue-500 ${colors.primary}`
                   : `${colors.textMuted} border-transparent hover:${colors.text} ${colors.hover}`
@@ -135,31 +109,55 @@ const TerminalPanel = () => {
                 transition: 'all 0.2s ease-in-out'
               }}
             >
-              <span>{String(tab.id || '')}</span>
-              {tab.isExecuting && (
-                <div 
-                  className="text-xs"
-                  style={{
-                    animation: 'spin 1s linear infinite'
-                  }}
-                >⟳</div>
-              )}
-              {tab.status === 'error' && !tab.isExecuting && (
-                <div className="text-red-400 text-xs">⚠</div>
-              )}
-              {tab.status === 'success' && !tab.isExecuting && tab.results && (
-                <div className="text-green-400 text-xs">✓</div>
-              )}
-            </button>
+              <div
+                onClick={(e) => {
+                  e.stopPropagation(); // Prevent triggering resize
+                  handleTabClick(tab.id);
+                }}
+                className="flex items-center gap-2 flex-1"
+              >
+                <IoTerminal className="text-sm" />
+                <span>{String(tab.id || '')}</span>
+                {tab.isExecuting && (
+                  <div 
+                    className="text-xs text-blue-400"
+                    style={{
+                      animation: 'spin 1s linear infinite'
+                    }}
+                  >⟳</div>
+                )}
+                {tab.status === 'error' && !tab.isExecuting && (
+                  <div className="text-red-400 text-xs">⚠</div>
+                )}
+                {tab.status === 'success' && !tab.isExecuting && tab.results && (
+                  <div className="text-green-400 text-xs">✓</div>
+                )}
+              </div>
+              
+              {/* Close button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation(); // Prevent triggering resize
+                  handleTabClose(tab.id, e);
+                }}
+                className={`opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-500/20 hover:text-red-400 transition-all duration-200 ${colors.textMuted}`}
+                title="Close tab"
+              >
+                <IoClose size={12} />
+              </button>
+            </div>
           ))}
         </div>
         
         <button
-          onClick={toggleTerminal}
-          className={`ml-2 p-1 rounded ${colors.hover} ${colors.textSecondary} hover:${colors.text} transition-colors flex-shrink-0`}
+          onClick={(e) => {
+            e.stopPropagation(); // Prevent triggering resize
+            toggleTerminal();
+          }}
+          className={`ml-2 p-2 rounded ${colors.hover} ${colors.textSecondary} hover:${colors.text} transition-colors flex-shrink-0`}
           title="Close Terminal"
         >
-          ×
+          <IoClose size={16} />
         </button>
       </div>
 
@@ -174,67 +172,23 @@ const TerminalPanel = () => {
           }}
         >
             {displayData ? (
-              <div className="p-4 h-full flex flex-col min-h-0">
+              <div className="h-full flex flex-col min-h-0">
                 {/* Results/Error Display */}
                 {(displayData.isExecuting || displayData.isLoading) ? (
                   <div className="flex-1 flex flex-col items-center justify-center loading-container">
-                    <div className="text-4xl mb-4 smooth-spinner">⟳</div>
-                    <div 
-                      className={`text-lg font-medium mb-2 ${colors.textMuted}`}
-                      style={{
-                        animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
-                      }}
-                    >
-                      {(() => {
-                        // Determine execution type based on query content
-                        const query = displayData.query || '';
-                        const queryLower = query.toLowerCase().trim();
-                        
-                        // Check if it's SQL
-                        if (queryLower.startsWith('select') || 
-                            queryLower.startsWith('insert') || 
-                            queryLower.startsWith('update') || 
-                            queryLower.startsWith('delete') || 
-                            queryLower.startsWith('create') || 
-                            queryLower.startsWith('drop') || 
-                            queryLower.startsWith('alter') ||
-                            queryLower.startsWith('with') ||
-                            queryLower.includes('from ') ||
-                            queryLower.includes('where ')) {
-                          return 'Executing SQL Query...';
-                        }
-                        
-                        // Check if it's PySpark/Python
-                        if (queryLower.includes('spark') || 
-                            queryLower.includes('pyspark') ||
-                            queryLower.includes('df.') ||
-                            queryLower.includes('spark.') ||
-                            queryLower.includes('from pyspark') ||
-                            queryLower.startsWith('import ') ||
-                            queryLower.includes('def ') ||
-                            queryLower.includes('print(')) {
-                          return 'Executing PySpark Code...';
-                        }
-                        
-                        // Default fallback
-                        return 'Executing Query...';
-                      })()}
+                    {/* Wave Loading Animation */}
+                    <div className="wave-loader">
+                      <div className="wave-bar"></div>
+                      <div className="wave-bar"></div>
+                      <div className="wave-bar"></div>
+                      <div className="wave-bar"></div>
+                      <div className="wave-bar"></div>
+                      <div className="wave-bar"></div>
+                      <div className="wave-bar"></div>
                     </div>
-                    <div className={`text-sm opacity-70 ${colors.textMuted}`}>Please wait while your code is being processed</div>
-                    {displayData.query && (
-                      <div className={`mt-4 p-3 ${colors.secondary} rounded text-xs text-left max-w-2xl opacity-80`}>
-                        <div className="font-medium mb-1">Running:</div>
-                        <pre className="whitespace-pre-wrap overflow-hidden">
-                          {displayData.query.length > 200 
-                            ? displayData.query.substring(0, 200) + '...' 
-                            : displayData.query
-                          }
-                        </pre>
-                      </div>
-                    )}
                   </div>
                 ) : displayData.error || (displayData.results?.status === 'error') ? (
-                  <div className={`text-red-300 dark:text-red-400 ${colors.secondary} p-4 rounded border border-red-300 dark:border-red-700 select-text error-text`}>
+                  <div className={`text-red-300 dark:text-red-400 ${colors.secondary} rounded border border-red-300 dark:border-red-700 select-text error-text`}>
                     <div className="font-medium mb-2 select-text">Query Error:</div>
                     <pre className="text-sm whitespace-pre-wrap select-text cursor-text error-text" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
                       {(() => {
@@ -334,8 +288,7 @@ const TerminalPanel = () => {
               </div>
             ) : (
               <div className={`text-center ${colors.textMuted} py-8`}>
-                <div className="text-4xl mb-2">📊</div>
-                <div>No active tab</div>
+                <div>No results to display</div>
               </div>
             )}
           </div>

@@ -225,11 +225,8 @@ const VSCodeInterface = () => {
         {/* Show terminal controls */}
         {isTerminalVisible && (
           <>
-            {/* Horizontal resize handle */}
-            <ResizeHandle onMouseDown={handleBottomMouseDown} orientation="horizontal" />
-            
             {/* Bottom Terminal panel - spans full width of right side */}
-            <TerminalPanel />
+            <TerminalPanel onHeaderMouseDown={handleBottomMouseDown} />
           </>
         )}
         
