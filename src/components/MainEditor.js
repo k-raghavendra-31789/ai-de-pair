@@ -2386,15 +2386,6 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Tab Bar */}
       <div className={`${colors.secondary} ${colors.border} border-b flex items-center relative flex-shrink-0`}>
-        {/* Logo */}
-        <div className="flex items-center px-3 py-2 flex-shrink-0">
-          <img 
-            src="/logo.png" 
-            alt="Logo" 
-            className="h-6 w-auto opacity-80 hover:opacity-100 transition-opacity duration-200"
-          />
-        </div>
-        
         {/* Tabs Container */}
         <div className="flex items-center flex-1 overflow-x-auto">
           {safeOpenTabs.map((tab) => {
@@ -2675,114 +2666,112 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
           </div>
         )}
 
-        {/* Theme Toggle Slider */}
+        {/* Theme Toggle Slider (without icons) */}
         <div className={`flex items-center px-4 ${colors.borderLight} border-l`}>
-          <div className="flex items-center gap-4">
-            <span className={`text-xs ${colors.textSecondary}`}>🌙</span>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={theme === 'light'}
-                onChange={toggleTheme}
-                className="sr-only peer"
-              />
-              <div className={`w-9 h-5 ${colors.quaternary} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:${colors.accentBg}`}></div>
-            </label>
-            <span className={`text-xs ${colors.textSecondary}`}>☀️</span>
-            
-            {/* Database Connection Selector - Larger Size */}
-            <div className="flex items-center gap-3 border-l pl-4 ml-4 border-gray-300 dark:border-gray-600">
-              {/* Connection Status Indicator - Larger */}
-              <div className="flex items-center gap-2">
-                <div className={`w-3 h-3 rounded-full ${
-                  (activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId
-                    ? 'bg-green-500' 
-                    : 'bg-red-500'
-                }`} title={
-                  (activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId
-                    ? 'Connected' 
-                    : 'Not Connected'
-                }></div>
-                <span className={`text-xs font-medium ${colors.text}`}>
-                  {(activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId ? 'Connected' : 'No Connection'}
-                </span>
-              </div>
-              
-              {/* Connection Selector Dropdown - Larger */}
-              <select
-                value={(activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId || ''}
-                onChange={(e) => {
-                  const connectionId = e.target.value;
-                  if (activeTab) {
-                    // Set file-specific connection
-                    actions.setFileConnection(activeTab.name, connectionId);
-                  } else {
-                    // Fall back to global connection
-                    actions.setActiveConnection(connectionId);
-                  }
-                }}
-                className={`text-sm px-3 py-2 rounded border ${colors.borderLight} ${colors.secondary} ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[160px] font-medium`}
-                title="Select database connection for this file"
-              >
-                <option value="">No Connection</option>
-                {dbConnections.map(conn => (
-                  <option key={conn.id} value={conn.id}>
-                    {conn.name || `${conn.type} (${conn.host})`}
-                  </option>
-                ))}
-              </select>
-              
-              {/* Quick Manage Button - Larger */}
-              <button
-                onClick={() => setShowConnectionModal(true)}
-                className={`px-3 py-2 rounded border ${colors.borderLight} ${colors.textSecondary} hover:${colors.text} hover:${colors.hover} transition-colors duration-150 active:scale-95`}
-                title="Manage connections"
-              >
-                <FaCog size={14} />
-              </button>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={theme === 'light'}
+              onChange={toggleTheme}
+              className="sr-only peer"
+            />
+            <div className={`w-9 h-5 ${colors.quaternary} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:${colors.accentBg}`}></div>
+          </label>
+        </div>
+
+        {/* Database Connection Selector - Larger Size */}
+        <div className={`flex items-center px-4 ${colors.borderLight} border-l`}>
+          <div className="flex items-center gap-3">
+            {/* Connection Status Indicator - Larger */}
+            <div className="flex items-center gap-2">
+              <div className={`w-3 h-3 rounded-full ${
+                (activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId
+                  ? 'bg-green-500' 
+                  : 'bg-red-500'
+              }`} title={
+                (activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId
+                  ? 'Connected' 
+                  : 'Not Connected'
+              }></div>
+              <span className={`text-xs font-medium ${colors.text}`}>
+                {(activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId ? 'Connected' : 'No Connection'}
+              </span>
             </div>
             
-            {/* SQL Generation Control */}
-            {sqlGeneration.isActive && (
-              <div className="flex items-center gap-3 border-l pl-4 ml-4 border-gray-300 dark:border-gray-600">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-orange-500 animate-pulse" title="SQL Generation Active"></div>
-                  <span className={`text-xs font-medium ${colors.text}`}>
-                    Generating Code...
-                  </span>
-                </div>
-                <button
-                  onClick={() => {
-                    // Reset SQL generation state
-                    resetSqlGeneration();
-                    
-                    // Clear any persisted state that might be causing the issue
-                    try {
-                      sessionStorage.removeItem('sqlGeneration');
-                      localStorage.removeItem('sqlGeneration');
-                    } catch (e) {
-                      console.warn('Could not clear storage:', e);
-                    }
-                    
-                    // Send message to close any active SSE connections
-                    try {
-                      window.postMessage({ type: 'FORCE_CLOSE_SSE_CONNECTION' }, '*');
-                    } catch (e) {
-                      console.warn('Could not send SSE close message:', e);
-                    }
-                    
-                    console.log('🛑 SQL Generation stopped by user');
-                    console.log('🧹 Cleared any persisted generation state');
-                    console.log('📡 Requested SSE connection closure');
-                  }}
-                  className={`px-3 py-2 rounded border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-600 dark:text-red-400 dark:hover:bg-red-900 transition-colors duration-150 active:scale-95 text-xs font-medium`}
-                  title="Stop automatic code generation and close streaming connections"
-                >
-                  ⏹ Stop Generation
-                </button>
-              </div>
-            )}
+            {/* Connection Selector Dropdown - Larger */}
+            <select
+              value={(activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId || ''}
+              onChange={(e) => {
+                const connectionId = e.target.value;
+                if (activeTab) {
+                  // Set file-specific connection
+                  actions.setFileConnection(activeTab.name, connectionId);
+                } else {
+                  // Fall back to global connection
+                  actions.setActiveConnection(connectionId);
+                }
+              }}
+              className={`text-sm px-3 py-2 rounded border ${colors.borderLight} ${colors.secondary} ${colors.text} focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[160px] font-medium`}
+              title="Select database connection for this file"
+            >
+              <option value="">No Connection</option>
+              {dbConnections.map(conn => (
+                <option key={conn.id} value={conn.id}>
+                  {conn.name || `${conn.type} (${conn.host})`}
+                </option>
+              ))}
+            </select>
+            
+            {/* Quick Manage Button - Larger */}
+            <button
+              onClick={() => setShowConnectionModal(true)}
+              className={`px-3 py-2 rounded border ${colors.borderLight} ${colors.textSecondary} hover:${colors.text} hover:${colors.hover} transition-colors duration-150 active:scale-95`}
+              title="Manage connections"
+            >
+              <FaCog size={14} />
+            </button>
           </div>
+            
+          {/* SQL Generation Control */}
+          {sqlGeneration.isActive && (
+            <div className="flex items-center gap-3 border-l pl-4 ml-4 border-gray-300 dark:border-gray-600">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-orange-500 animate-pulse" title="SQL Generation Active"></div>
+                <span className={`text-xs font-medium ${colors.text}`}>
+                  Generating Code...
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  // Reset SQL generation state
+                  resetSqlGeneration();
+                  
+                  // Clear any persisted state that might be causing the issue
+                  try {
+                    sessionStorage.removeItem('sqlGeneration');
+                    localStorage.removeItem('sqlGeneration');
+                  } catch (e) {
+                    console.warn('Could not clear storage:', e);
+                  }
+                  
+                  // Send message to close any active SSE connections
+                  try {
+                    window.postMessage({ type: 'FORCE_CLOSE_SSE_CONNECTION' }, '*');
+                  } catch (e) {
+                    console.warn('Could not send SSE close message:', e);
+                  }
+                  
+                  console.log('🛑 SQL Generation stopped by user');
+                  console.log('🧹 Cleared any persisted generation state');
+                  console.log('📡 Requested SSE connection closure');
+                }}
+                className={`px-3 py-2 rounded border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-600 dark:text-red-400 dark:hover:bg-red-900 transition-colors duration-150 active:scale-95 text-xs font-medium`}
+                title="Stop automatic code generation and close streaming connections"
+              >
+                ⏹ Stop Generation
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -2809,17 +2798,38 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
         )}
 
         {openTabs.length === 0 ? (
-          // Welcome Screen
+          // Welcome Screen with Large Logo
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center p-6 max-w-2xl">
-              <div className={`text-lg mb-4 ${colors.text}`}>DataMonk AI-powered Data Engineering assistant</div>
-              <div className={`space-y-2 text-sm ${colors.textMuted}`}>
-                <div>Toggle Terminal: Ctrl + `</div>
-                <div className="mt-4 text-xs">
-                  ▣ Drag files from the explorer to open them in tabs!
-                </div>
-                <div className="mt-2 text-xs">
-                  ○ Use the theme toggle in the tab bar!
+            <div className="flex flex-col items-center space-y-6 max-w-md text-center p-6">
+              {/* Large Logo */}
+              <img 
+                src="/logo.png" 
+                alt="DataMonk Logo" 
+                className="w-32 h-auto opacity-90 hover:opacity-100 transition-opacity duration-300"
+              />
+              
+              {/* Welcome Text */}
+              <div className="space-y-3">
+                <h1 className={`text-2xl font-bold ${colors.text}`}>
+                  Vibe with your data
+                </h1>
+                <p className={`text-lg ${colors.textMuted} leading-relaxed`}>
+                  Start by opening a file from the file explorer or creating a new file to begin editing.
+                </p>
+              </div>
+              
+              {/* Quick Actions */}
+              <div className="flex flex-col items-center space-y-2 w-full">
+                <div className={`text-sm ${colors.textMuted} mb-2`}>Quick Actions:</div>
+                <div className="grid grid-cols-1 gap-2 text-sm">
+                  <div className={`flex items-center justify-center space-x-2 ${colors.textMuted}`}>
+                    <span className={`font-mono ${colors.secondary} ${colors.borderLight} border px-2 py-1 rounded text-xs`}>Ctrl + `</span>
+                    <span>Toggle Terminal</span>
+                  </div>
+                  <div className={`flex items-center justify-center space-x-2 ${colors.textMuted}`}>
+                    <span className={`font-mono ${colors.secondary} ${colors.borderLight} border px-2 py-1 rounded text-xs`}>Drag & Drop</span>
+                    <span>Drag files from explorer to open</span>
+                  </div>
                 </div>
               </div>
             </div>
