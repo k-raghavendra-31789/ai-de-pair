@@ -1,17 +1,26 @@
 @import "tailwindcss"; 
 
-/* Apply Poppins font globally with better weight for readability */
+/* Apply optimized font stack with better rendering for clarity */
 * {
-  font-family: 'Poppins', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-  font-weight: 400; /* Ensure minimum weight for readability */
+  font-family: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-weight: 400;
+  /* Better font rendering for clarity */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern" 1;
+  font-variant-ligatures: common-ligatures;
 }
 
 /* Ensure better font weight for light mode */
 body {
   font-weight: 400;
+  /* Improve text clarity */
+  letter-spacing: -0.011em;
+  line-height: 1.5;
 }
 
-/* Increase font weight for light mode specifically - but only for text elements that need it */
+/* Increase font weight for light mode specifically - better visibility */
 html.light-mode body,
 html.light-mode p,
 html.light-mode span,
@@ -20,15 +29,15 @@ html.light-mode div {
 }
 
 html.light-mode .font-normal {
-  font-weight: 450;
+  font-weight: 500; /* Increased from 450 for better clarity */
 }
 
 html.light-mode .font-medium {
-  font-weight: 500;
+  font-weight: 550; /* Increased from 500 for better clarity */
 }
 
 html.light-mode .font-semibold {
-  font-weight: 600;
+  font-weight: 650; /* Increased from 600 for better clarity */
 }
 
 /* Prevent body/html from scrolling */

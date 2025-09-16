@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as monaco from 'monaco-editor';
 import { useTheme } from './ThemeContext';
+import { HiSparkles } from 'react-icons/hi2';
 
 // Self-host Monaco workers using CDN
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
@@ -404,8 +405,9 @@ const MonacoEditor = ({
         language: getLanguageFromFileName(fileName),
         theme: theme === 'dark' ? 'simple-dark' : 'simple-light',
         automaticLayout: true,
-        fontSize: 14,
-        fontFamily: 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace',
+        fontSize: 15,
+        fontWeight: '500',
+        fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Mono', 'Roboto Mono', Consolas, 'Ubuntu Mono', monospace",
         lineHeight: 1.5,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,  // Disable to prevent layout issues
@@ -507,10 +509,6 @@ const MonacoEditor = ({
             const timeout = setTimeout(() => {
               setIsUserSelecting(false);
               
-              // Auto-populate instructions with the full selected code
-              const codeContext = `Fix this code: "${selectedText}"`;
-              setUserInstructions(codeContext);
-              
               // Calculate toolbar position
               const endPosition = selection.getEndPosition();
               const position = editor.getScrolledVisiblePosition(endPosition);
@@ -571,6 +569,71 @@ const MonacoEditor = ({
       // Add Shift+Alt+F format shortcut for SQL formatting
       editor.addCommand(monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF, () => {
         formatSQL(editor);
+      });
+
+      // Add Ctrl+K shortcut for AI inline editor
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => {
+        const selection = editor.getSelection();
+        if (selection && !selection.isEmpty()) {
+          // If there's already a selection, show the AI toolbar directly
+          const selectedText = editor.getModel().getValueInRange(selection);
+          setSelectedCode(selectedText);
+          setSelectionRange(selection);
+          
+          // Calculate toolbar position
+          const endPosition = selection.getEndPosition();
+          const position = editor.getScrolledVisiblePosition(endPosition);
+          if (position) {
+            const container = containerRef.current;
+            const containerRect = container.getBoundingClientRect();
+            
+            const viewportX = containerRect.left + position.left;
+            const viewportY = containerRect.top + position.top;
+            
+            const toolbarX = Math.max(10, Math.min(viewportX, window.innerWidth - 620));
+            
+            setToolbarPosition({
+              x: toolbarX,
+              y: viewportY - 40
+            });
+            setShowCorrectionToolbar(true);
+          }
+        } else {
+          // If no selection, select current line first then show toolbar
+          const position = editor.getPosition();
+          const lineContent = editor.getModel().getLineContent(position.lineNumber);
+          const fullLineRange = new monaco.Range(
+            position.lineNumber, 1,
+            position.lineNumber, lineContent.length + 1
+          );
+          editor.setSelection(fullLineRange);
+          
+          // Wait a bit for selection to be processed, then trigger the AI toolbar
+          setTimeout(() => {
+            const selectedText = editor.getModel().getValueInRange(fullLineRange);
+            setSelectedCode(selectedText);
+            setSelectionRange(fullLineRange);
+            
+            // Calculate toolbar position for the selected line
+            const endPos = fullLineRange.getEndPosition();
+            const pos = editor.getScrolledVisiblePosition(endPos);
+            if (pos) {
+              const container = containerRef.current;
+              const containerRect = container.getBoundingClientRect();
+              
+              const viewportX = containerRect.left + pos.left;
+              const viewportY = containerRect.top + pos.top;
+              
+              const toolbarX = Math.max(10, Math.min(viewportX, window.innerWidth - 620));
+              
+              setToolbarPosition({
+                x: toolbarX,
+                y: viewportY - 40
+              });
+              setShowCorrectionToolbar(true);
+            }
+          }, 50);
+        }
       });
 
       // Add context menu option for SQL formatting
@@ -1087,8 +1150,9 @@ const MonacoEditor = ({
           ignoreTrimWhitespace: false,
           renderIndicators: true,
           originalEditable: false,
-          fontSize: 14,
-          fontFamily: "'Fira Code', 'Cascadia Code', 'JetBrains Mono', Consolas, 'Courier New', monospace",
+          fontSize: 15,
+          fontWeight: '500',
+          fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Mono', 'Roboto Mono', Consolas, 'Ubuntu Mono', monospace",
           scrollbar: {
             vertical: 'auto',
             horizontal: 'auto',
@@ -1217,81 +1281,41 @@ const MonacoEditor = ({
       {showCorrectionToolbar && (
         <div
           data-correction-toolbar="true"
-          className="fixed z-[99999] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg overflow-hidden"
+          className={`fixed z-[99999] ${theme === 'dark' ? 'bg-gray-800 border-gray-600' : 'bg-white border-gray-300'} border rounded-lg shadow-lg overflow-hidden`}
           style={{
             left: toolbarPosition.x,
             top: toolbarPosition.y,
-            maxWidth: '400px',
-            minWidth: '300px'
+            width: '600px',
+            minHeight: '50px'
           }}
         >
-          {/* Main Toolbar */}
-          <div className="px-3 py-2 flex items-center gap-2">
-            {/* Mode Toggle */}
-            <div className="flex bg-gray-100 dark:bg-gray-700 rounded text-xs">
-              <button
-                onClick={() => setCorrectionMode('fix')}
-                className={`px-2 py-1 rounded-l transition-colors ${
-                  correctionMode === 'fix' 
-                    ? 'bg-blue-500 text-white' 
-                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-                title="Quick fix only"
-              >
-                Fix
-              </button>
-              <button
-                onClick={() => setCorrectionMode('enhance')}
-                className={`px-2 py-1 rounded-r transition-colors ${
-                  correctionMode === 'enhance' 
-                    ? 'bg-blue-500 text-white' 
-                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-                title="Smart enhance with context"
-              >
-                Enhance
-              </button>
-            </div>
-            
-            <div className="flex items-center gap-1">
-              <button
-                onClick={handleToggleInstructions}
-                className="px-2 py-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors text-xs"
-                title={showInstructionsArea ? "Hide instructions" : "Add instructions"}
-              >
-                Instructions
-              </button>
-              
-              <button
-                onClick={handleCorrectCode}
-                disabled={isRequestingCorrection}
-                className="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 disabled:opacity-50 transition-colors"
-                title="Apply AI correction"
-              >
-                {isRequestingCorrection ? 'Processing...' : 'Apply'}
-              </button>
-              
-              <button
-                onClick={handleCloseToolbar}
-                className="px-1 py-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-xs"
-                title="Close"
-              >
-                ×
-              </button>
-            </div>
-          </div>
-
-          {/* Instructions Area */}
-          {showInstructionsArea && (
-            <div className="border-t border-gray-200 dark:border-gray-600 p-3">
+          {/* Simple horizontal layout */}
+          <div className="flex items-start h-full px-3 py-2 gap-3">
+            {/* Textarea field with embedded button */}
+            <div className="flex-1 relative">
               <textarea
                 value={userInstructions}
                 onChange={(e) => setUserInstructions(e.target.value)}
-                placeholder={selectedCode ? "Instructions auto-populated with your selection. Edit as needed..." : "Add specific instructions..."}
-                className="w-full px-2 py-2 text-xs border border-gray-300 dark:border-gray-500 rounded resize-none bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                rows={3}
+                placeholder="Tell AI what to do with the selected code..."
+                className={`w-full px-3 py-2 pr-12 text-sm border rounded resize-none ${
+                  theme === 'dark' 
+                    ? 'border-gray-600 bg-gray-700 text-gray-200 placeholder-gray-500 focus:border-blue-500' 
+                    : 'border-gray-300 bg-white text-gray-900 placeholder-gray-400 focus:border-gray-400'
+                } focus:outline-none focus:ring-1 focus:ring-blue-500`}
+                autoFocus
+                rows={1}
+                style={{
+                  minHeight: '34px',
+                  height: 'auto',
+                  overflow: 'hidden'
+                }}
+                onInput={(e) => {
+                  // Auto-resize textarea
+                  e.target.style.height = 'auto';
+                  e.target.style.height = Math.max(34, e.target.scrollHeight) + 'px';
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  if (e.key === 'Enter' && !e.shiftKey && userInstructions.trim()) {
                     e.preventDefault();
                     handleCorrectCode();
                   }
@@ -1301,33 +1325,31 @@ const MonacoEditor = ({
                   }
                 }}
               />
-              <div className="mt-2 flex items-center justify-between">
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  Ctrl+Enter to apply • Esc to close
-                </div>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => setUserInstructions('Make this code more efficient')}
-                    className="px-2 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
-                  >
-                    Optimize
-                  </button>
-                  <button
-                    onClick={() => setUserInstructions('Add error handling and validation')}
-                    className="px-2 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
-                  >
-                    Add Error Handling
-                  </button>
-                  <button
-                    onClick={() => setUserInstructions('Add detailed comments explaining what this code does')}
-                    className="px-2 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
-                  >
-                    Add Comments
-                  </button>
-                </div>
-              </div>
+              
+              {/* Submit button inside textarea */}
+              <button
+                onClick={handleCorrectCode}
+                disabled={isRequestingCorrection || !userInstructions.trim()}
+                className={`absolute bottom-2 right-2 p-1.5 rounded transition-colors ${
+                  isRequestingCorrection || !userInstructions.trim()
+                    ? 'text-gray-400 cursor-not-allowed' 
+                    : theme === 'dark' ? 'text-gray-300 hover:text-white' : 'text-gray-600 hover:text-gray-800'
+                }`}
+                title={isRequestingCorrection ? 'Processing...' : 'Submit (Enter)'}
+              >
+                <HiSparkles size={14} />
+              </button>
             </div>
-          )}
+            
+            {/* Close button */}
+            <button
+              onClick={handleCloseToolbar}
+              className={`text-gray-400 hover:text-gray-600 transition-colors p-1 mt-1`}
+              title="Close (Escape)"
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
     </div>

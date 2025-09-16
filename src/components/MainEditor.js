@@ -2675,7 +2675,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               onChange={toggleTheme}
               className="sr-only peer"
             />
-            <div className={`w-9 h-5 ${colors.quaternary} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:${colors.accentBg}`}></div>
+            <div className={`w-9 h-5 ${theme === 'dark' ? 'bg-gray-600' : 'bg-gray-300'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all ${theme === 'dark' ? 'peer-checked:bg-blue-600' : 'peer-checked:bg-blue-500'}`}></div>
           </label>
         </div>
 
@@ -2687,7 +2687,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               <div className={`w-3 h-3 rounded-full ${
                 (activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId
                   ? 'bg-green-500' 
-                  : 'bg-red-500'
+                  : theme === 'dark' ? 'bg-gray-500' : 'bg-gray-400'
               }`} title={
                 (activeTab && state.fileConnections?.[activeTab.name]) || activeConnectionId
                   ? 'Connected' 
@@ -2728,7 +2728,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               className={`px-3 py-2 rounded border ${colors.borderLight} ${colors.textSecondary} hover:${colors.text} hover:${colors.hover} transition-colors duration-150 active:scale-95`}
               title="Manage connections"
             >
-              <FaCog size={14} />
+              <FaCog size={14} className={theme === 'dark' ? 'text-blue-400' : 'text-blue-600'} />
             </button>
           </div>
             
@@ -3086,7 +3086,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               {createPR && (
                 <div className={`border ${colors.borderLight} rounded-lg p-5 space-y-4 ${colors.tertiary}`}>
                   <div className="flex items-center gap-2 mb-4">
-                    <FaCog className="text-gray-500" size={16} />
+                    <FaCog className={theme === 'dark' ? 'text-blue-400' : 'text-blue-600'} size={16} />
                     <h4 className={`font-medium ${colors.text}`}>Pull Request Configuration</h4>
                   </div>
                   
