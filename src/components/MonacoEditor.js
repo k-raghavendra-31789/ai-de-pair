@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as monaco from 'monaco-editor';
+import * as XLSX from 'xlsx';
 import { useTheme } from './ThemeContext';
 import { HiSparkles } from 'react-icons/hi2';
+import { useMentions } from '../hooks/useMentions';
+import MentionDropdown from './MentionDropdown';
 
 // Self-host Monaco workers using CDN
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
@@ -36,7 +39,11 @@ const MonacoEditor = ({
   onSave,
   onGitCommit, // New prop for Git commit callback
   onCodeCorrection, // New prop for AI code correction callback
-  wordWrap = false
+  wordWrap = false,
+  // New props for @mentions support
+  getAllAvailableFiles, // Function to get available files
+  additionalFiles = {}, // Additional files (memoryFiles, excelFiles, etc.)
+  showToast // Toast notification function
 }) => {
   const { theme } = useTheme() || { theme: 'dark' }; // Fallback to dark theme if context is unavailable
   
@@ -59,7 +66,10 @@ const MonacoEditor = ({
   const [correctionSpinnerWidget, setCorrectionSpinnerWidget] = useState(null);
   const [userInstructions, setUserInstructions] = useState('');
   const [showInstructionsArea, setShowInstructionsArea] = useState(false);
-  const [correctionMode, setCorrectionMode] = useState('fix'); // 'fix' or 'enhance'
+  const [isProcessingAI, setIsProcessingAI] = useState(false); // Loading state for AI processing
+  const [isStreamingCode, setIsStreamingCode] = useState(false); // Streaming state for code insertion
+  // UI state for the correction toolbar - now instruction-based
+  const [localSelectedExcelFile, setLocalSelectedExcelFile] = useState(null); // Local Excel file state
   
   // State for Monaco diff editor (keep for potential future use, but use inline approach)
   const [showDiffEditor, setShowDiffEditor] = useState(false);
@@ -76,6 +86,222 @@ const MonacoEditor = ({
   // State for smart selection handling
   const [selectionTimeout, setSelectionTimeout] = useState(null);
   const [isUserSelecting, setIsUserSelecting] = useState(false);
+
+  // Add useRef for the textarea in the correction toolbar
+  const instructionsTextareaRef = useRef(null);
+
+  // Add @mentions functionality to the instructions textarea
+  const {
+    showMentionDropdown,
+    mentionType,
+    mentionSuggestions,
+    selectedMentionIndex,
+    selectedMentions,
+    excelRowsDropdown,
+    selectedExcelFile,
+    setExcelRowsDropdown,
+    setSelectedMentions,
+    setShowMentionDropdown,
+    handleInputChange,
+    handleKeyDown,
+    handleMentionSelect,
+    clearMentions,
+    removeMention,
+    getMentionText
+  } = useMentions(
+    userInstructions,
+    setUserInstructions,
+    instructionsTextareaRef,
+    getAllAvailableFiles,
+    additionalFiles,
+    showToast
+  );
+
+  // Debug: Log mentions state when it changes (simplified)
+  useEffect(() => {
+    if (selectedMentions.length > 0) {
+      console.log('🔍 Selected mentions updated:', selectedMentions);
+      selectedMentions.forEach((mention, index) => {
+        console.log(`🔍 Mention ${index}:`, {
+          name: mention.name, 
+          type: mention.type, 
+          hasExcelData: !!mention.excelData,
+          excelData: mention.excelData,
+          fullMention: mention
+        });
+      });
+    }
+  }, [selectedMentions]);
+
+  // Helper function to check if file is Excel
+  const isExcelFile = useCallback((fileName) => {
+    const excelExtensions = ['.xlsx', '.xls', '.csv'];
+    return excelExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
+  }, []);
+
+  // Helper function to get Excel data from AppState
+  const getExcelDataForFile = useCallback((fileName) => {
+    try {
+      // Check if we have excelFiles
+      if (!additionalFiles?.excelFiles) {
+        return null;
+      }
+
+      // Look for Excel file by searching through all excelFiles keys
+      const excelFileKey = Object.keys(additionalFiles.excelFiles).find(key => {
+        return key.includes(fileName);
+      });
+
+      if (!excelFileKey) {
+        return null;
+      }
+
+      // Get the Excel file data directly
+      const fileData = additionalFiles.excelFiles[excelFileKey];
+      
+      if (!fileData || !fileData.content) {
+        return null;
+      }
+      
+      // Parse Excel content (assuming XLSX library is available)
+      if (typeof XLSX === 'undefined') {
+        console.warn('XLSX library not available for Excel parsing');
+        return null;
+      }
+      
+      const workbook = XLSX.read(fileData.content, { type: 'array' });
+      const sheetNames = workbook.SheetNames;
+      const sheetsData = {};
+      
+      // Process each sheet
+      sheetNames.forEach(sheetName => {
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+          header: 1, 
+          defval: '', 
+          raw: false 
+        });
+        
+        // Get header row and data rows
+        const headers = jsonData[0] || [];
+        const dataRows = jsonData.slice(1);
+        
+        sheetsData[sheetName] = {
+          headers,
+          rows: dataRows,
+          totalRows: dataRows.length
+        };
+      });
+      
+      const result = {
+        fileName,
+        tabId: excelFileKey, // Use the excel file key as the tab ID
+        sheetNames,
+        sheetsData,
+        activeSheet: fileData.activeSheet || sheetNames[0]
+      };
+      
+      return result;
+    } catch (error) {
+      console.error('Error parsing Excel file:', error);
+      return null;
+    }
+  }, [additionalFiles]);
+
+  // Handle Excel row selection
+  const handleExcelRowSelect = useCallback((rowData, rowIndex, sheetName) => {
+    console.log('🔍 Excel row clicked:', { rowData, rowIndex, sheetName });
+    
+    const currentExcelFile = localSelectedExcelFile || selectedExcelFile;
+    
+    if (!currentExcelFile) {
+      console.error('No Excel file selected');
+      return;
+    }
+
+    if (!excelRowsDropdown || !excelRowsDropdown.sheetsData || !excelRowsDropdown.sheetsData[sheetName]) {
+      console.error('Excel sheet data not found');
+      return;
+    }
+    
+    const mention = {
+      id: `${currentExcelFile.name}-${sheetName}-row${rowIndex}-${Date.now()}-${Math.random()}`,
+      name: currentExcelFile.name,
+      path: currentExcelFile.path,
+      type: 'context',
+      source: currentExcelFile.source,
+      isGitHub: currentExcelFile.isGitHub || false,
+      isCloud: currentExcelFile.isCloud || false,
+      excelData: {
+        sheetName: sheetName,
+        rowIndex: rowIndex,
+        rowData: rowData,
+        headers: excelRowsDropdown.sheetsData[sheetName].headers || []
+      }
+    };
+    
+    console.log('🔍 Adding Excel mention with excelData:', mention);
+    console.log('🔍 ExcelData structure:', mention.excelData);
+    
+    // Add directly to selected mentions using the setter from useMentions hook
+    // This bypasses any processing that might strip the excelData
+    setSelectedMentions(prev => {
+      const updated = [...prev, mention];
+      console.log('🔍 Updated selectedMentions after Excel mention:', updated);
+      return updated;
+    });
+    
+    // Update the textarea content to show the mention
+    const mentionText = `@context:${currentExcelFile.name} `;
+    setUserInstructions(prev => prev + mentionText);
+    
+    // Close all dropdowns but keep the main toolbar open
+    setExcelRowsDropdown(null);
+    setLocalSelectedExcelFile(null);
+    setShowMentionDropdown(false); // Close the @mention dropdown too
+    
+    // Ensure the toolbar stays visible and textarea is focused
+    setTimeout(() => {
+      if (instructionsTextareaRef.current) {
+        instructionsTextareaRef.current.focus();
+        // Move cursor to end
+        const length = instructionsTextareaRef.current.value.length;
+        instructionsTextareaRef.current.setSelectionRange(length, length);
+      }
+    }, 100);
+  }, [localSelectedExcelFile, selectedExcelFile, excelRowsDropdown, setSelectedMentions, setUserInstructions, setExcelRowsDropdown, setShowMentionDropdown]);
+
+  // Handle Excel sheet change in dropdown
+  const handleExcelSheetChange = useCallback((sheetName) => {
+    console.log('🔍 Excel sheet clicked:', sheetName);
+    
+    if (excelRowsDropdown) {
+      setExcelRowsDropdown({
+        ...excelRowsDropdown,
+        activeSheet: sheetName
+      });
+    }
+  }, [excelRowsDropdown, setExcelRowsDropdown]);
+
+  // Override mention select to handle Excel files
+  const handleMentionSelectWithExcel = useCallback((selectedFile) => {
+    // Check if this is a context mention with an Excel file
+    if (selectedFile.type === 'context' && isExcelFile(selectedFile.name)) {
+      // Store the selected Excel file
+      setLocalSelectedExcelFile(selectedFile);
+      
+      // For Excel files in context mode, show Excel rows dropdown instead of adding directly
+      const excelData = getExcelDataForFile(selectedFile.name);
+      
+      if (excelData) {
+        setExcelRowsDropdown(excelData);
+        return; // Don't call the original handleMentionSelect
+      }
+    }
+    
+    // For non-Excel files, use the original handler
+    handleMentionSelect(selectedFile);
+  }, [isExcelFile, getExcelDataForFile, setExcelRowsDropdown, handleMentionSelect]);
 
   // Function to detect language from file extension
   const getLanguageFromFileName = (fileName) => {
@@ -485,6 +711,8 @@ const MonacoEditor = ({
       editor.onDidChangeCursorSelection((e) => {
         const selection = e.selection;
         
+        console.log('🔧 Selection changed:', selection, 'isEmpty:', selection?.isEmpty());
+        
         // Clear any existing timeout
         if (selectionTimeout) {
           clearTimeout(selectionTimeout);
@@ -498,6 +726,7 @@ const MonacoEditor = ({
         if (selection && !selection.isEmpty()) {
           const selectedText = editor.getModel().getValueInRange(selection);
           if (selectedText.trim().length > 0) {
+            console.log('🔧 Storing selection - text length:', selectedText.length, 'range:', selection);
             setSelectedCode(selectedText);
             setSelectionRange(selection);
             setIsUserSelecting(true);
@@ -551,11 +780,14 @@ const MonacoEditor = ({
         }
       });
 
-      // Hide toolbar when clicking elsewhere
+      // Hide toolbar when clicking elsewhere - but preserve stored selection
       editor.onDidChangeCursorPosition(() => {
         const selection = editor.getSelection();
         if (!selection || selection.isEmpty()) {
-          setShowCorrectionToolbar(false);
+          // Only hide toolbar if we don't have stored selection data
+          if (!selectedCode || !selectionRange) {
+            setShowCorrectionToolbar(false);
+          }
         }
       });
 
@@ -602,15 +834,23 @@ const MonacoEditor = ({
           // If no selection, select current line first then show toolbar
           const position = editor.getPosition();
           const lineContent = editor.getModel().getLineContent(position.lineNumber);
+          
+          console.log('🔧 Ctrl+K with no selection - line content:', lineContent, 'length:', lineContent.length);
+          
+          // Create proper range for the line
           const fullLineRange = new monaco.Range(
             position.lineNumber, 1,
-            position.lineNumber, lineContent.length + 1
+            position.lineNumber, Math.max(1, lineContent.length + 1)
           );
+          
+          console.log('🔧 Setting line selection:', fullLineRange);
           editor.setSelection(fullLineRange);
           
           // Wait a bit for selection to be processed, then trigger the AI toolbar
           setTimeout(() => {
             const selectedText = editor.getModel().getValueInRange(fullLineRange);
+            console.log('🔧 Selected line text:', selectedText, 'length:', selectedText.length);
+            
             setSelectedCode(selectedText);
             setSelectionRange(fullLineRange);
             
@@ -668,7 +908,7 @@ const MonacoEditor = ({
             const selection = editor.getSelection();
             if (selection && !selection.isEmpty()) {
               const selectedText = editor.getModel().getValueInRange(selection);
-              handleCodeCorrection(selectedText, selection, '');
+              handleCodeCorrection(selectedText, selection, '', []); // Pass empty mentions array for keyboard shortcut
             }
           }
         });
@@ -758,13 +998,12 @@ const MonacoEditor = ({
     }
   };
 
-  // Handle code correction with AI
-  const handleCodeCorrection = async (selectedText, selection, customInstructions = '') => {
+  const handleCodeCorrection = async (selectedText, selection, customInstructions = '', selectedMentions = []) => {
     console.log('🤖 Monaco handleCodeCorrection called with:', {
       selectedText: selectedText?.substring(0, 50) + '...',
       customInstructions: customInstructions || 'NO CUSTOM INSTRUCTIONS',
-      correctionMode: correctionMode,
-      fileName: fileName
+      fileName: fileName,
+      selectedMentions: selectedMentions.length > 0 ? selectedMentions.map(m => ({ type: m.type, name: m.name })) : 'None'
     });
     
     if (!onCodeCorrection || !selectedText.trim()) return;
@@ -782,8 +1021,7 @@ const MonacoEditor = ({
       console.log('📤 Calling onCodeCorrection with parameters:', {
         selectedText: selectedText?.substring(0, 50) + '...',
         context: { fileName, language: getLanguageFromFileName(fileName) },
-        customInstructions: customInstructions || 'EMPTY',
-        correctionMode: correctionMode
+        customInstructions: customInstructions || 'EMPTY'
       });
       
       const correctedCode = await onCodeCorrection(selectedText, {
@@ -793,7 +1031,7 @@ const MonacoEditor = ({
         endLine: selection.endLineNumber,
         startColumn: selection.startColumn,
         endColumn: selection.endColumn
-      }, customInstructions, correctionMode);
+      }, customInstructions, selectedMentions);
       
       // Hide spinner before showing diff
       hideProcessingSpinner();
@@ -805,6 +1043,29 @@ const MonacoEditor = ({
     } catch (error) {
       console.error('Code correction failed:', error);
       hideProcessingSpinner();
+      
+      // Show user-friendly error message via toast
+      let errorMessage = 'Code transformation failed. Please try again.';
+      
+      if (error.message) {
+        if (error.message.includes('timeout')) {
+          errorMessage = 'Code transformation timed out. Please try with a smaller selection.';
+        } else if (error.message.includes('Failed to fetch') || error.message.includes('Network')) {
+          errorMessage = 'Unable to connect to AI service. Please check if the server is running on port 8000.';
+        } else if (error.message.includes('API Error')) {
+          errorMessage = `AI service error: ${error.message}`;
+        } else {
+          errorMessage = `Code transformation failed: ${error.message}`;
+        }
+      }
+      
+      // Show error to user via toast notification
+      if (showToast) {
+        showToast(errorMessage, 'error');
+      } else {
+        // Fallback to alert if showToast is not available
+        alert(errorMessage);
+      }
     } finally {
       setIsRequestingCorrection(false);
       setUserInstructions('');
@@ -813,16 +1074,217 @@ const MonacoEditor = ({
   };
 
   // Handle correction toolbar actions
-  const handleCorrectCode = () => {
-    console.log('🔧 Apply button clicked with:', {
-      selectedCode: selectedCode?.substring(0, 50) + '...',
+  const handleCorrectCode = async () => {
+    // Provide default instruction if none given but mentions exist
+    const finalInstructions = userInstructions.trim() || 
+      (selectedMentions.length > 0 ? 'Transform this code using the provided context' : 'Improve this code');
+    
+    // Try to get current selection if stored ones are empty
+    let currentSelectedCode = selectedCode;
+    let currentSelectionRange = selectionRange;
+    
+    // Always try to get current selection first
+    if (monacoInstance.current) {
+      const editor = monacoInstance.current;
+      const currentSelection = editor.getSelection();
+      
+      console.log('🔧 Current editor selection:', currentSelection);
+      console.log('🔧 Stored selection range:', currentSelectionRange);
+      
+      // Always use current selection if it exists and is not empty
+      if (currentSelection && !currentSelection.isEmpty()) {
+        currentSelectedCode = editor.getModel().getValueInRange(currentSelection);
+        currentSelectionRange = currentSelection;
+        console.log('🔧 Using current editor selection, length:', currentSelectedCode?.length);
+      }
+    }
+    
+    // If we have a selectionRange but no selectedCode, get the text from the range
+    if (!currentSelectedCode && currentSelectionRange && monacoInstance.current) {
+      const editor = monacoInstance.current;
+      currentSelectedCode = editor.getModel().getValueInRange(currentSelectionRange);
+      console.log('🔧 Got text from stored selection range:', currentSelectedCode?.substring(0, 50) + '...');
+      console.log('🔧 Full extracted text length:', currentSelectedCode?.length);
+      console.log('🔧 Text is truthy:', !!currentSelectedCode);
+    }
+    
+    if ((!currentSelectedCode || !currentSelectionRange) && monacoInstance.current) {
+      const editor = monacoInstance.current;
+      const selection = editor.getSelection();
+      if (selection && !selection.isEmpty()) {
+        currentSelectedCode = editor.getModel().getValueInRange(selection);
+        currentSelectionRange = selection;
+        console.log('� Using current editor selection');
+      }
+    }
+    
+    console.log('�🔧 Apply button clicked with:', {
+      selectedCode: currentSelectedCode?.substring(0, 50) + '...',
       userInstructions: userInstructions || 'NO INSTRUCTIONS PROVIDED',
-      correctionMode: correctionMode,
-      showInstructionsArea: showInstructionsArea
+      finalInstructions: finalInstructions,
+      showInstructionsArea: showInstructionsArea,
+      selectedMentions: selectedMentions.map(m => ({ type: m.type, name: m.name })),
+      hasSelectedCode: !!currentSelectedCode,
+      hasSelectionRange: !!currentSelectionRange,
+      selectionRange: currentSelectionRange
     });
     
-    if (selectedCode && selectionRange) {
-      handleCodeCorrection(selectedCode, selectionRange, userInstructions, correctionMode);
+    console.log('🔍 Checking condition - selectedCode:', !!currentSelectedCode, 'selectionRange:', !!currentSelectionRange);
+    console.log('🔍 currentSelectedCode type:', typeof currentSelectedCode, 'value:', currentSelectedCode?.substring(0, 20) + '...');
+    console.log('🔍 currentSelectionRange type:', typeof currentSelectionRange, 'value:', currentSelectionRange);
+    console.log('🔍 selectedMentions length:', selectedMentions.length);
+    
+    // Allow processing if we have selected code OR mentions OR user instructions
+    if ((currentSelectedCode && currentSelectionRange) || selectedMentions.length > 0 || (finalInstructions && finalInstructions.trim())) {
+      console.log('✅ Proceeding with handleCodeCorrection call');
+      
+      // For empty selection but with mentions/instructions, use empty string and current cursor position
+      if (!currentSelectedCode && (selectedMentions.length > 0 || finalInstructions.trim()) && monacoInstance.current) {
+        const editor = monacoInstance.current;
+        const position = editor.getPosition();
+        currentSelectionRange = new monaco.Range(
+          position.lineNumber, position.column,
+          position.lineNumber, position.column
+        );
+        currentSelectedCode = ''; // Empty string for insertion
+        console.log('🔧 Using cursor position for code generation:', currentSelectionRange);
+      }
+      
+      // Call with individual parameters as expected by handleCodeCorrection
+      console.log('🔧 About to call onCodeCorrection:', {
+        hasFunction: !!onCodeCorrection,
+        functionType: typeof onCodeCorrection
+      });
+      
+      if (onCodeCorrection) {
+        try {
+          console.log('🔧 Calling onCodeCorrection and awaiting result...');
+          setIsProcessingAI(true); // Start loading
+          
+          const transformedCode = await onCodeCorrection(
+            currentSelectedCode,
+            {
+              fileName,
+              language: getLanguageFromFileName(fileName),
+              startLine: currentSelectionRange.startLineNumber,
+              endLine: currentSelectionRange.endLineNumber,
+              startColumn: currentSelectionRange.startColumn,
+              endColumn: currentSelectionRange.endColumn
+            },
+            finalInstructions, // Pass the final instructions (user provided or default)
+            selectedMentions // Pass the @mentions data
+          );
+          
+          console.log('✅ Received transformed code:', transformedCode?.substring(0, 100) + '...');
+          
+          // Switch from API loading to processing mode
+          setIsProcessingAI(false);
+          
+          // Determine if this is code transformation (has selected code) or generation (empty selection)
+          const isCodeTransformation = currentSelectedCode && currentSelectedCode.trim().length > 0;
+          
+          if (isCodeTransformation) {
+            console.log('✅ Code transformation detected - using inline diff');
+            console.log('🔧 Setting diff states:', {
+              originalCode: currentSelectedCode.substring(0, 50) + '...',
+              correctedCode: transformedCode.substring(0, 50) + '...',
+              diffSelection: currentSelectionRange
+            });
+            
+            // For code transformation, use the showInlineDiff function
+            showInlineDiff(currentSelectedCode, transformedCode, currentSelectionRange);
+            
+            console.log('🔧 showInlineDiff called');
+            
+            // Close the AI toolbar since we're switching to diff mode
+            setShowCorrectionToolbar(false);
+            setUserInstructions('');
+            clearMentions();
+            
+          } else {
+            console.log('✅ Code generation detected - using streaming insertion');
+            setIsStreamingCode(true);
+            
+            // Insert the transformed code into the editor with streaming effect
+            if (transformedCode && monacoInstance.current) {
+              const editor = monacoInstance.current;
+              
+              console.log('✅ Starting streaming insertion...');
+              
+              // Split the code into lines for streaming effect
+              const lines = transformedCode.split('\n');
+              let insertedText = '';
+              let lineIndex = 0;
+              
+              // Store the initial insertion position
+              const startPosition = {
+                lineNumber: currentSelectionRange.startLineNumber,
+                column: currentSelectionRange.startColumn
+              };
+              
+              // Function to stream code line by line (much faster)
+              const streamNextLine = () => {
+                if (lineIndex < lines.length) {
+                  // Add the entire next line
+                  const nextLine = lines[lineIndex];
+                  insertedText += (lineIndex > 0 ? '\n' : '') + nextLine;
+                  lineIndex++;
+                  
+                  // Calculate the current end position based on inserted text
+                  const model = editor.getModel();
+                  const startOffset = model.getOffsetAt(startPosition);
+                  const endPosition = model.getPositionAt(startOffset + insertedText.length);
+                  
+                  // Create range from start position to current end position
+                  const currentRange = new monaco.Range(
+                    startPosition.lineNumber,
+                    startPosition.column,
+                    endPosition.lineNumber,
+                    endPosition.column
+                  );
+                  
+                  // Update the editor with current text
+                  editor.executeEdits('ai-transformation', [{
+                    range: currentRange,
+                    text: insertedText,
+                    forceMoveMarkers: true
+                  }]);
+                  
+                  // Continue with next line - much faster now
+                  setTimeout(streamNextLine, 60); // 60ms per line for quick but visible streaming
+                } else {
+                  // Streaming complete
+                  console.log('✅ Code streaming completed');
+                  
+                  // Close the toolbar after successful insertion
+                  setIsStreamingCode(false);
+                  setShowCorrectionToolbar(false);
+                  setUserInstructions('');
+                  clearMentions();
+                  
+                  // Position cursor at the end of inserted text
+                  const model = editor.getModel();
+                  const startOffset = model.getOffsetAt(startPosition);
+                  const endPosition = model.getPositionAt(startOffset + transformedCode.length);
+                  editor.setPosition(endPosition);
+                }
+              };
+              
+              // Start the streaming effect
+              streamNextLine();
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error in code transformation:', error);
+        } finally {
+          // Only reset API loading state here, streaming state is managed in the streaming function
+          setIsProcessingAI(false);
+        }
+      } else {
+        console.log('❌ onCodeCorrection prop is not available');
+      }
+    } else {
+      console.log('❌ No valid selection found - cannot proceed with code correction');
     }
   };
 
@@ -830,6 +1292,7 @@ const MonacoEditor = ({
     setShowCorrectionToolbar(false);
     setShowInstructionsArea(false);
     setUserInstructions('');
+    clearMentions(); // Clear @mentions when closing toolbar
     if (monacoInstance.current) {
       monacoInstance.current.focus();
     }
@@ -1285,18 +1748,65 @@ const MonacoEditor = ({
           style={{
             left: toolbarPosition.x,
             top: toolbarPosition.y,
-            width: '600px',
+            width: '800px', // Increased from 600px to show full placeholder
             minHeight: '50px'
           }}
         >
           {/* Simple horizontal layout */}
           <div className="flex items-start h-full px-3 py-2 gap-3">
-            {/* Textarea field with embedded button */}
+            {/* Textarea field with embedded button and @mentions support */}
             <div className="flex-1 relative">
+              {/* Selected Mentions Display */}
+              {selectedMentions.length > 0 && (
+                <div className={`mb-2 p-2 rounded ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                  <div className={`text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'} mb-1`}>
+                    Referenced files ({selectedMentions.length}):
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedMentions.map((mention) => (
+                      <div
+                        key={mention.id}
+                        className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded ${
+                          theme === 'dark' ? 'bg-gray-600 text-gray-200' : 'bg-gray-200 text-gray-700'
+                        }`}
+                      >
+                        <span className="text-blue-400">@{mention.type}</span>
+                        <span>{mention.name}</span>
+                        {/* Show Excel-specific details */}
+                        {mention.excelData && (
+                          <span className={`text-xs ${theme === 'dark' ? 'text-green-400' : 'text-green-600'}`}>
+                            ({mention.excelData.sheetName} Row {mention.excelData.rowIndex + 1})
+                          </span>
+                        )}
+                        {/* Show code-specific details */}
+                        {mention.codeData && (
+                          <span className={`text-xs ${theme === 'dark' ? 'text-purple-400' : 'text-purple-600'}`}>
+                            (Lines {mention.codeData.startLine}-{mention.codeData.endLine})
+                          </span>
+                        )}
+                        <span className="text-xs">
+                          {mention.source === 'github' ? '📁' : 
+                           mention.source === 'cloud' ? '☁️' : 
+                           mention.source === 'memory' ? '🧠' : '💻'}
+                        </span>
+                        <button
+                          onClick={() => removeMention(mention.id)}
+                          className={`text-xs ${theme === 'dark' ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700'} ml-1`}
+                          title="Remove mention"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
               <textarea
+                ref={instructionsTextareaRef}
                 value={userInstructions}
-                onChange={(e) => setUserInstructions(e.target.value)}
-                placeholder="Tell AI what to do with the selected code..."
+                onChange={(e) => handleInputChange(e.target.value, e.target.selectionStart)}
+                placeholder="Tell AI what to do with the selected code... Use @file, @context, or @code to reference files"
                 className={`w-full px-3 py-2 pr-12 text-sm border rounded resize-none ${
                   theme === 'dark' 
                     ? 'border-gray-600 bg-gray-700 text-gray-200 placeholder-gray-500 focus:border-blue-500' 
@@ -1315,13 +1825,19 @@ const MonacoEditor = ({
                   e.target.style.height = Math.max(34, e.target.scrollHeight) + 'px';
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && userInstructions.trim()) {
-                    e.preventDefault();
-                    handleCorrectCode();
-                  }
-                  if (e.key === 'Escape') {
-                    e.preventDefault();
-                    handleCloseToolbar();
+                  // Handle @mentions navigation first
+                  handleKeyDown(e);
+                  
+                  // If not handled by mentions, check for other shortcuts
+                  if (!showMentionDropdown) {
+                    if (e.key === 'Enter' && !e.shiftKey && (userInstructions.trim() || selectedMentions.length > 0)) {
+                      e.preventDefault();
+                      handleCorrectCode();
+                    }
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      handleCloseToolbar();
+                    }
                   }
                 }}
               />
@@ -1329,15 +1845,53 @@ const MonacoEditor = ({
               {/* Submit button inside textarea */}
               <button
                 onClick={handleCorrectCode}
-                disabled={isRequestingCorrection || !userInstructions.trim()}
+                disabled={isProcessingAI || isStreamingCode || (!userInstructions.trim() && selectedMentions.length === 0)}
                 className={`absolute bottom-2 right-2 p-1.5 rounded transition-colors ${
-                  isRequestingCorrection || !userInstructions.trim()
+                  isProcessingAI || isStreamingCode || (!userInstructions.trim() && selectedMentions.length === 0)
                     ? 'text-gray-400 cursor-not-allowed' 
                     : theme === 'dark' ? 'text-gray-300 hover:text-white' : 'text-gray-600 hover:text-gray-800'
                 }`}
-                title={isRequestingCorrection ? 'Processing...' : 'Submit (Enter)'}
+                title={
+                  isProcessingAI 
+                    ? 'AI is generating code...' 
+                    : isStreamingCode
+                      ? 'Streaming code into editor...'
+                      : (!userInstructions.trim() && selectedMentions.length === 0)
+                        ? 'Enter instructions or add @mentions to transform code'
+                        : 'Submit (Enter)'
+                }
               >
-                <HiSparkles size={14} />
+                {isProcessingAI ? (
+                  <div className="animate-spin">
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                      <circle 
+                        cx="12" 
+                        cy="12" 
+                        r="10" 
+                        stroke="currentColor" 
+                        strokeWidth="4" 
+                        strokeDasharray="32" 
+                        strokeDashoffset="32"
+                        className="animate-pulse"
+                      />
+                      <path 
+                        d="M12 2 C6.48 2 2 6.48 2 12" 
+                        stroke="currentColor" 
+                        strokeWidth="4" 
+                        strokeLinecap="round"
+                        className="opacity-75"
+                      />
+                    </svg>
+                  </div>
+                ) : isStreamingCode ? (
+                  <div className="animate-pulse">
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0L19.2 12l-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/>
+                    </svg>
+                  </div>
+                ) : (
+                  <HiSparkles size={14} />
+                )}
               </button>
             </div>
             
@@ -1349,6 +1903,126 @@ const MonacoEditor = ({
             >
               ×
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* @mentions dropdown - positioned outside the toolbar */}
+      {showCorrectionToolbar && showMentionDropdown && (
+        <div
+          className="fixed z-[100000]"
+          style={{
+            left: toolbarPosition.x,
+            top: toolbarPosition.y + 60, // Position closer to the toolbar
+            width: '800px', // Match the new toolbar width
+          }}
+        >
+          <MentionDropdown
+            showMentionDropdown={showMentionDropdown}
+            mentionType={mentionType}
+            mentionSuggestions={mentionSuggestions}
+            selectedMentionIndex={selectedMentionIndex}
+            onMentionSelect={handleMentionSelectWithExcel}
+            position="bottom"
+            className="z-[100000]" 
+            style={{
+              left: '0',
+              right: '0'
+            }}
+          />
+        </div>
+      )}
+
+      {/* Excel rows dropdown - positioned outside the toolbar */}
+      {showCorrectionToolbar && excelRowsDropdown && (
+        <div
+          className="fixed z-[100000]"
+          style={{
+            left: toolbarPosition.x,
+            top: toolbarPosition.y + 60, // Position closer to the toolbar
+            width: '800px', // Match the toolbar width
+          }}
+        >
+          <div 
+            data-excel-dropdown="true"
+            className={`${theme === 'dark' ? 'bg-gray-800 border-gray-600' : 'bg-white border-gray-300'} border rounded-lg shadow-lg min-w-[400px] max-h-[400px] overflow-hidden`}
+          >
+            {/* Header */}
+            <div className={`p-3 text-sm ${theme === 'dark' ? 'text-gray-200 border-gray-600' : 'text-gray-800 border-gray-300'} border-b`}>
+              <div className="font-medium">Select data from: {excelRowsDropdown.fileName}</div>
+              <div className={`text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'} mt-1`}>
+                Choose sheet and row to include in context
+              </div>
+            </div>
+            
+            {/* Sheet tabs */}
+            <div className={`flex ${theme === 'dark' ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-300'} border-b overflow-x-auto`}>
+              {excelRowsDropdown.sheetNames.map((sheetName, index) => (
+                <button
+                  key={sheetName}
+                  onClick={() => handleExcelSheetChange(sheetName)}
+                  className={`px-3 py-2 text-xs font-medium whitespace-nowrap border-r ${theme === 'dark' ? 'border-gray-600' : 'border-gray-300'} last:border-r-0 ${
+                    sheetName === excelRowsDropdown.activeSheet
+                      ? `${theme === 'dark' ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white'}`
+                      : `${theme === 'dark' ? 'text-gray-300 hover:text-white hover:bg-gray-600' : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'}`
+                  }`}
+                >
+                  {sheetName}
+                </button>
+              ))}
+            </div>
+            
+            {/* Data rows */}
+            <div className="max-h-[250px] overflow-y-auto">
+              {(() => {
+                const currentSheet = excelRowsDropdown.sheetsData[excelRowsDropdown.activeSheet];
+                if (!currentSheet || !currentSheet.rows || currentSheet.rows.length === 0) {
+                  return (
+                    <div className={`p-4 text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'} text-center`}>
+                      No data found in this sheet
+                    </div>
+                  );
+                }
+                
+                const { headers, rows } = currentSheet;
+                return (
+                  <>
+                    {/* Show all data rows */}
+                    {rows.map((row, rowIndex) => (
+                      <div 
+                        key={rowIndex}
+                        className={`p-3 border-b ${theme === 'dark' ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-200 hover:bg-gray-50'} last:border-b-0 cursor-pointer`}
+                        onClick={() => handleExcelRowSelect(row, rowIndex, excelRowsDropdown.activeSheet)}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className={`text-xs font-medium ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>Row {rowIndex + 1}</span>
+                          <span className={`text-xs ${theme === 'dark' ? 'text-blue-400' : 'text-blue-600'}`}>Click to select</span>
+                        </div>
+                        
+                        {/* Show row data as key-value pairs */}
+                        <div className="space-y-1">
+                          {row.map((cell, cellIndex) => {
+                            const header = headers[cellIndex] || `Column ${cellIndex + 1}`;
+                            if (!cell && cell !== 0) return null; // Skip empty cells
+                            
+                            return (
+                              <div key={cellIndex} className="flex">
+                                <span className={`text-xs ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'} min-w-[100px] mr-2 font-medium`}>
+                                  {header}:
+                                </span>
+                                <span className={`text-xs ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'} flex-1`}>
+                                  {cell}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                );
+              })()}
+            </div>
           </div>
         </div>
       )}
