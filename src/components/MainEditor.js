@@ -2891,25 +2891,50 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               
               {/* Welcome Text */}
               <div className="space-y-3">
-                <h1 className={`text-2xl font-bold ${colors.text}`}>
+                <h1 className={`text-2xl font-bold ${colors.textMuted}`}>
                   Vibe with your data
                 </h1>
-                <p className={`text-lg ${colors.textMuted} leading-relaxed`}>
-                  Start by opening a file from the file explorer or creating a new file to begin editing.
-                </p>
               </div>
               
               {/* Quick Actions */}
               <div className="flex flex-col items-center space-y-2 w-full">
                 <div className={`text-sm ${colors.textMuted} mb-2`}>Quick Actions:</div>
-                <div className="grid grid-cols-1 gap-2 text-sm">
-                  <div className={`flex items-center justify-center space-x-2 ${colors.textMuted}`}>
-                    <span className={`font-mono ${colors.secondary} ${colors.borderLight} border px-2 py-1 rounded text-xs`}>Ctrl + `</span>
-                    <span>Toggle Terminal</span>
+                <div className="flex flex-col gap-1 text-sm">
+                  <div className={`flex items-center justify-center ${colors.textMuted} py-1`}>
+                    <div className="flex items-center gap-4">
+                      <span>Toggle Terminal</span>
+                      <div className="flex items-center space-x-1">
+                        <kbd className="px-1.5 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">Ctrl</kbd>
+                        <span className="text-xs text-gray-400">+</span>
+                        <kbd className="px-1.5 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">`</kbd>
+                      </div>
+                    </div>
                   </div>
-                  <div className={`flex items-center justify-center space-x-2 ${colors.textMuted}`}>
-                    <span className={`font-mono ${colors.secondary} ${colors.borderLight} border px-2 py-1 rounded text-xs`}>Drag & Drop</span>
-                    <span>Drag files from explorer to open</span>
+                  <div className={`flex items-center justify-center ${colors.textMuted} py-1`}>
+                    <div className="flex items-center gap-4">
+                      <span>Bring up In-line AI Editing</span>
+                      <div className="flex items-center space-x-1">
+                        <kbd className="px-1.5 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">Ctrl</kbd>
+                        <span className="text-xs text-gray-400">+</span>
+                        <kbd className="px-1.5 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">K</kbd>
+                      </div>
+                    </div>
+                  </div>
+                  <div className={`flex items-center justify-center ${colors.textMuted} py-1`}>
+                    <div className="flex items-center gap-4">
+                      <span>Attach DataContext with</span>
+                      <div className="flex items-center">
+                        <kbd className="px-2 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">@context</kbd>
+                      </div>
+                    </div>
+                  </div>
+                  <div className={`flex items-center justify-center ${colors.textMuted} py-1`}>
+                    <div className="flex items-center gap-4">
+                      <span>Drag files from explorer to open</span>
+                      <div className="flex items-center">
+                        <kbd className="px-2 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">Drag & Drop</kbd>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

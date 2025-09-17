@@ -433,18 +433,28 @@ const MonacoEditor = ({
           { token: '', foreground: '000000' },
           { token: 'keyword', foreground: '0066CC' },
           { token: 'keyword.sql', foreground: '0066CC' },
-          { token: 'string', foreground: '000000' },
-          { token: 'string.sql', foreground: '000000' },
+          { token: 'keyword.python', foreground: '0066CC' },
+          { token: 'string', foreground: '008000' },
+          { token: 'string.sql', foreground: '008000' },
+          { token: 'string.python', foreground: '008000' },
           { token: 'comment', foreground: '999999' },
           { token: 'comment.sql', foreground: '999999' },
-          { token: 'number', foreground: '000000' },
-          { token: 'number.sql', foreground: '000000' },
+          { token: 'comment.python', foreground: '999999' },
+          { token: 'number', foreground: '800080' },
+          { token: 'number.sql', foreground: '800080' },
+          { token: 'number.python', foreground: '800080' },
+          { token: 'number.float.python', foreground: '800080' },
           { token: 'identifier', foreground: '000000' },
           { token: 'identifier.sql', foreground: '000000' },
+          { token: 'identifier.python', foreground: '000000' },
+          { token: 'type.identifier.python', foreground: '0066CC' },
+          { token: 'annotation.python', foreground: '666666' },
           { token: 'operator', foreground: '000000' },
           { token: 'operator.sql', foreground: '000000' },
+          { token: 'operator.python', foreground: '000000' },
           { token: 'delimiter', foreground: '000000' },
           { token: 'delimiter.sql', foreground: '000000' },
+          { token: 'delimiter.python', foreground: '000000' },
           { token: 'type', foreground: '000000' },
           { token: 'type.sql', foreground: '000000' },
           { token: 'variable', foreground: '000000' },
@@ -479,18 +489,28 @@ const MonacoEditor = ({
           { token: '', foreground: 'd4d4d4' },
           { token: 'keyword', foreground: '569cd6' },
           { token: 'keyword.sql', foreground: '569cd6' },
-          { token: 'string', foreground: 'd4d4d4' },
-          { token: 'string.sql', foreground: 'd4d4d4' },
+          { token: 'keyword.python', foreground: '569cd6' },
+          { token: 'string', foreground: 'ce9178' },
+          { token: 'string.sql', foreground: 'ce9178' },
+          { token: 'string.python', foreground: 'ce9178' },
           { token: 'comment', foreground: '6a9955' },
           { token: 'comment.sql', foreground: '6a9955' },
-          { token: 'number', foreground: 'd4d4d4' },
-          { token: 'number.sql', foreground: 'd4d4d4' },
+          { token: 'comment.python', foreground: '6a9955' },
+          { token: 'number', foreground: 'b5cea8' },
+          { token: 'number.sql', foreground: 'b5cea8' },
+          { token: 'number.python', foreground: 'b5cea8' },
+          { token: 'number.float.python', foreground: 'b5cea8' },
           { token: 'identifier', foreground: 'd4d4d4' },
           { token: 'identifier.sql', foreground: 'd4d4d4' },
+          { token: 'identifier.python', foreground: 'd4d4d4' },
+          { token: 'type.identifier.python', foreground: '4ec9b0' },
+          { token: 'annotation.python', foreground: '9cdcfe' },
           { token: 'operator', foreground: 'd4d4d4' },
           { token: 'operator.sql', foreground: 'd4d4d4' },
+          { token: 'operator.python', foreground: 'd4d4d4' },
           { token: 'delimiter', foreground: 'd4d4d4' },
           { token: 'delimiter.sql', foreground: 'd4d4d4' },
+          { token: 'delimiter.python', foreground: 'd4d4d4' },
           { token: 'type', foreground: 'd4d4d4' },
           { token: 'type.sql', foreground: 'd4d4d4' },
           { token: 'variable', foreground: 'd4d4d4' },
@@ -515,6 +535,131 @@ const MonacoEditor = ({
           'editor.lineHighlightBackground': '#2d2d2d',
           'editorCursor.foreground': '#d4d4d4',
           'editor.selectionBackground': '#264f78',
+        }
+      });
+
+      // Enhanced Python language configuration for better syntax highlighting
+      console.log('🐍 Configuring Python language support...');
+      monaco.languages.setLanguageConfiguration('python', {
+        comments: {
+          lineComment: '#',
+          blockComment: ['"""', '"""']
+        },
+        brackets: [
+          ['{', '}'],
+          ['[', ']'],
+          ['(', ')']
+        ],
+        autoClosingPairs: [
+          { open: '{', close: '}' },
+          { open: '[', close: ']' },
+          { open: '(', close: ')' },
+          { open: '"', close: '"', notIn: ['string'] },
+          { open: "'", close: "'", notIn: ['string', 'comment'] }
+        ],
+        surroundingPairs: [
+          { open: '{', close: '}' },
+          { open: '[', close: ']' },
+          { open: '(', close: ')' },
+          { open: '"', close: '"' },
+          { open: "'", close: "'" }
+        ],
+        folding: {
+          offSide: true,
+          markers: {
+            start: /^\s*#region\b/,
+            end: /^\s*#endregion\b/
+          }
+        }
+      });
+
+      // Enhanced Python tokenizer with PySpark-specific keywords
+      monaco.languages.setMonarchTokensProvider('python', {
+        tokenPostfix: '.python',
+        keywords: [
+          'and', 'as', 'assert', 'break', 'class', 'continue', 'def',
+          'del', 'elif', 'else', 'except', 'exec', 'finally',
+          'for', 'from', 'global', 'if', 'import', 'in',
+          'is', 'lambda', 'not', 'or', 'pass', 'print',
+          'raise', 'return', 'try', 'while', 'with', 'yield',
+          'async', 'await', 'nonlocal',
+          // PySpark specific keywords and methods
+          'spark', 'SparkSession', 'SparkContext', 'DataFrame', 'RDD',
+          'select', 'filter', 'where', 'groupBy', 'agg', 'join',
+          'union', 'distinct', 'orderBy', 'sort', 'limit',
+          'collect', 'show', 'count', 'cache', 'persist',
+          'read', 'write', 'table', 'parquet', 'json', 'csv',
+          'withColumn', 'withColumnRenamed', 'drop', 'alias',
+          'col', 'expr', 'when', 'otherwise', 'lit'
+        ],
+        builtins: [
+          'True', 'False', 'None', 'NotImplemented', 'Ellipsis', '__debug__',
+          '__name__', '__doc__', '__file__', '__builtins__', '__module__',
+          '__dict__', '__class__', '__bases__', '__mro__', 'self', 'cls'
+        ],
+        operators: [
+          '=', '>', '<', '!', '~', '?', ':', '==', '<=', '>=',
+          '!=', '&&', '||', '++', '--', '+', '-', '*', '/', '&',
+          '|', '^', '%', '<<', '>>', '>>>', '+=', '-=', '*=',
+          '/=', '&=', '|=', '^=', '%=', '<<=', '>>=', '>>>='
+        ],
+        symbols: /[=><!~?:&|+\-*/^%]+/,
+        escapes: /\\(?:[abfnrtv\\"']|x[0-9A-Fa-f]{1,4}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})/,
+        tokenizer: {
+          root: [
+            [/[a-zA-Z_$][\w$]*/, {
+              cases: {
+                '@keywords': 'keyword',
+                '@builtins': 'type.identifier',
+                '@default': 'identifier'
+              }
+            }],
+            [/^\s*@\w+/, 'annotation'],
+            { include: '@whitespace' },
+            [/[{}()[\]]/, '@brackets'],
+            [/[<>](?!@symbols)/, '@brackets'],
+            [/@symbols/, {
+              cases: {
+                '@operators': 'operator',
+                '@default': ''
+              }
+            }],
+            [/\d*\.\d+([eE][+-]?\d+)?/, 'number.float'],
+            [/\d+/, 'number'],
+            [/[;,.]/, 'delimiter'],
+            [/"([^"\\]|\\.)*$/, 'string.invalid'],
+            [/'([^'\\]|\\.)*$/, 'string.invalid'],
+            [/"/, 'string', '@string_double'],
+            [/'/, 'string', '@string_single'],
+            [/"""/, 'string', '@string_triple_double'],
+            [/'''/, 'string', '@string_triple_single'],
+          ],
+          whitespace: [
+            [/[ \t\r\n]+/, 'white'],
+            [/#.*$/, 'comment'],
+          ],
+          string_double: [
+            [/[^\\"]+/, 'string'],
+            [/@escapes/, 'string.escape'],
+            [/\\./, 'string.escape.invalid'],
+            [/"/, 'string', '@pop']
+          ],
+          string_single: [
+            [/[^\\']+/, 'string'],
+            [/@escapes/, 'string.escape'],
+            [/\\./, 'string.escape.invalid'],
+            [/'/, 'string', '@pop']
+          ],
+          string_triple_double: [
+            [/[^"]+/, 'string'],
+            [/"""/, 'string', '@pop'],
+            [/"/, 'string']
+          ],
+          string_triple_single: [
+            [/[^']+/, 'string'],
+            [/'''/, 'string', '@pop'],
+            [/'/, 'string']
+          ]
         }
       });
 
