@@ -11,7 +11,7 @@ import { BiGitPullRequest, BiGitBranch } from 'react-icons/bi';
 import { VscGithub, VscGitPullRequest } from 'react-icons/vsc';
 import { connectionManager } from '../services/ConnectionManager';
 
-const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, ref) => {
+const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible, getAllAvailableFiles }, ref) => {
   const { theme, toggleTheme, colors } = useTheme();
   const { state, actions } = useAppState();
   
@@ -112,6 +112,15 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [renamingTab, setRenamingTab] = useState(null);
   const [newTabName, setNewTabName] = useState('');
+
+  // Toast notification state
+  const [toast, setToast] = useState(null);
+
+  // Toast notification function
+  const showToast = useCallback((message, type = 'warning') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000); // Auto-hide after 3 seconds
+  }, []);
 
   // Helper function to get current content from memory file
   const getCurrentMemoryFileContent = useCallback((fileId) => {
@@ -985,39 +994,38 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
   }, [activeTab?.name, state.fileConnections, activeConnectionId, getActiveConnection, setSqlExecuting, setSqlResults, actions, state?.isTerminalVisible]);
 
   // Handle code correction with AI
-  const handleCodeCorrection = useCallback(async (selectedCode, context, userInstructions = '', correctionMode = 'fix') => {
-    console.log('🤖 Code correction requested:', {
+  const handleCodeCorrection = useCallback(async (selectedCode, context, userInstructions = '', selectedMentions = []) => {
+    console.log('🤖 Code transformation requested:', {
       selectedCode: selectedCode.substring(0, 100) + '...',
       fileName: context.fileName,
       language: context.language,
       lineRange: `${context.startLine}-${context.endLine}`,
       userInstructions: userInstructions || 'No specific instructions',
-      correctionMode: correctionMode
+      selectedMentions: selectedMentions.length > 0 ? selectedMentions.map(m => ({ type: m.type, name: m.name })) : 'None'
     });
 
-    try {
-      // Prepare the correction request
-      const correctionRequest = {
-        code: selectedCode,
-        fileName: context.fileName,
-        language: context.language,
-        startLine: context.startLine,
-        endLine: context.endLine,
-        startColumn: context.startColumn,
-        endColumn: context.endColumn,
-        userInstructions: userInstructions || '',
-        correctionMode: correctionMode, // 'fix' or 'enhance'
-        action: userInstructions ? 'custom' : correctionMode,
-        fullFileContext: correctionMode === 'enhance' ? 
-          (activeTab?.id ? fileContents[activeTab.id] || getCurrentMemoryFileContent(activeTab.fileId) : '') : 
-          '', // Only include context for enhance mode
-        timestamp: new Date().toISOString(),
-        sessionId: `correction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      };
+    // Prepare the transformation request (generalized from correction)
+    const transformRequest = {
+      code: selectedCode,
+      fileName: context.fileName,
+      language: context.language,
+      startLine: context.startLine,
+      endLine: context.endLine,
+      startColumn: context.startColumn,
+      endColumn: context.endColumn,
+      userInstructions: userInstructions || 'Improve this code',
+      selectedMentions: selectedMentions || [], // Rich @mentions data with full content
+      timestamp: new Date().toISOString(),
+      sessionId: `transform_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    };
 
-      console.log('🚀 Sending correction request to API:', {
-        endpoint: 'http://localhost:8000/api/v1/data/correct-code',
-        request: correctionRequest
+    console.log('🔧 Transform request prepared:', transformRequest);
+
+    try {
+
+      console.log('🚀 Sending transformation request to API:', {
+        endpoint: 'http://localhost:8000/api/v1/data/transform-code',
+        request: transformRequest
       });
 
       // Create AbortController for timeout handling
@@ -1027,13 +1035,13 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
       }, 60000); // 60 second timeout (increased from 30s)
 
       try {
-        // Call the real AI correction API with timeout
-        const response = await fetch('http://localhost:8000/api/v1/data/correct-code', {
+        // Call the AI transformation API with timeout
+        const response = await fetch('http://localhost:8000/api/v1/data/transform-code', {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify(correctionRequest),
+          body: JSON.stringify(transformRequest),
           signal: controller.signal // Add abort signal for timeout
         });
 
@@ -1043,14 +1051,35 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          throw new Error(`API Error ${response.status}: ${errorData.message || 'Failed to correct code'}`);
+          
+          // Handle unified format or legacy format
+          const errorMessage = errorData.message || 
+                              errorData.error?.details || 
+                              errorData.error || 
+                              'Failed to transform code';
+          
+          throw new Error(`API Error ${response.status}: ${errorMessage}`);
         }
 
         const result = await response.json();
         console.log('✅ API Response received:', result);
         
-        // Return the corrected code from the API response
-        return result.correctedCode || result.data?.correctedCode || result;
+        // Handle unified format
+        if (result.success === true && result.data?.transformedCode) {
+          console.log('✅ Unified format success response');
+          return result.data.transformedCode;
+        }
+        
+        // Handle unified format error
+        if (result.success === false) {
+          const errorMessage = result.message || 
+                              result.error?.details || 
+                              'Code transformation failed';
+          throw new Error(errorMessage);
+        }
+        
+        // Fallback to legacy formats for backward compatibility
+        return result.transformedCode || result.correctedCode || result.data?.transformedCode || result.data?.correctedCode || result;
       } finally {
         clearTimeout(timeoutId); // Ensure timeout is always cleared
       }
@@ -1061,89 +1090,141 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible }, 
         throw new Error('Request timeout: The AI service is taking longer than expected. Please try with a smaller code selection or try again later.');
       }
       
+      // Handle network/connection errors with fallback to simulation
+      if (error.message.includes('Failed to fetch') || error.message.includes('ERR_CONNECTION_REFUSED') || error.message.includes('ECONNREFUSED')) {
+        console.warn('🔧 AI service unavailable, falling back to simulation mode');
+        console.log('💡 Tip: Start the AI service on http://localhost:8000 for full functionality');
+        
+        // Fallback to simulation for development/testing
+        try {
+          const simulatedResult = await simulateAITransformation(transformRequest);
+          console.log('🎭 Using simulated AI transformation');
+          
+          // Show a warning to user that simulation is being used
+          if (typeof window !== 'undefined' && window.dispatchEvent) {
+            // Dispatch a custom event that can be caught by toast system
+            window.dispatchEvent(new CustomEvent('show-toast', {
+              detail: {
+                message: 'AI service unavailable - using offline simulation mode',
+                type: 'warning'
+              }
+            }));
+          }
+          
+          // Handle unified format from simulation
+          if (simulatedResult.success && simulatedResult.data?.transformedCode) {
+            return simulatedResult.data.transformedCode;
+          }
+          
+          // Fallback if simulation doesn't return unified format
+          return simulatedResult;
+        } catch (simError) {
+          console.error('Simulation also failed:', simError);
+          throw new Error('Both AI service and fallback simulation failed. Please check your setup.');
+        }
+      }
+      
       console.error('Code correction failed:', error);
       throw error;
     }
-  }, [activeTab, fileContents, getCurrentMemoryFileContent]);
+  }, []);
 
-  // Simulate AI correction (replace with actual API call)
-  const simulateAICorrection = async (request) => {
+  // Simulate AI transformation (replace with actual API call)
+  const simulateAITransformation = async (request) => {
     return new Promise((resolve, reject) => {
       setTimeout(() => {
-        let correctedCode = request.code;
+        let transformedCode = request.code;
+        const instructions = (request.userInstructions || '').toLowerCase();
         
-        if (request.correctionMode === 'fix') {
-          // SURGICAL FIX MODE: Only fix obvious errors, typos, syntax issues
+        // Analyze user instructions to determine what transformation to apply
+        if (instructions.includes('fix') || instructions.includes('error') || instructions.includes('typo')) {
+          // FIX MODE: Fix obvious errors, typos, syntax issues
           if (request.language === 'sql') {
-            // Fix common SQL typos and basic syntax
-            correctedCode = correctedCode
+            transformedCode = transformedCode
               .replace(/SELCT/gi, 'SELECT')
               .replace(/FORM/gi, 'FROM')
               .replace(/WHRE/gi, 'WHERE')
-              .replace(/;$/, ';') // Fix semicolon at end
+              .replace(/;$/, ';')
               .trim();
           } else if (request.language === 'python') {
-            // Fix Python syntax errors
-            correctedCode = correctedCode
-              .replace(/pint\(/g, 'print(') // Fix typo
-              .replace(/dfe\s+/g, 'def ') // Fix typo
-              .replace(/:\s*$/, ':') // Fix colon spacing
+            transformedCode = transformedCode
+              .replace(/pint\(/g, 'print(')
+              .replace(/dfe\s+/g, 'def ')
+              .replace(/:\s*$/, ':')
               .trim();
           } else if (request.language === 'javascript') {
-            // Fix JS syntax errors
-            correctedCode = correctedCode
-              .replace(/consol\.log/g, 'console.log') // Fix typo
-              .replace(/fucntion/g, 'function') // Fix typo
+            transformedCode = transformedCode
+              .replace(/consol\.log/g, 'console.log')
+              .replace(/fucntion/g, 'function')
               .trim();
           }
           
-        } else if (request.correctionMode === 'enhance') {
-          // SMART ENHANCE MODE: Use context for comprehensive improvements
+        } else if (instructions.includes('comment') || instructions.includes('document')) {
+          // COMMENT MODE: Add comments and documentation
           if (request.language === 'sql') {
-            // Enhanced SQL with formatting and optimization
-            correctedCode = correctedCode
+            transformedCode = `-- ${request.userInstructions}\n${transformedCode}`;
+          } else if (request.language === 'python') {
+            transformedCode = `# ${request.userInstructions}\n${transformedCode}`;
+          } else {
+            transformedCode = `// ${request.userInstructions}\n${transformedCode}`;
+          }
+          
+        } else if (instructions.includes('optimize') || instructions.includes('improve') || instructions.includes('enhance')) {
+          // OPTIMIZE MODE: Improve performance and structure
+          if (request.language === 'sql') {
+            transformedCode = transformedCode
               .replace(/select\s+\*/gi, 'SELECT *')
               .replace(/\bfrom\b/gi, 'FROM')
               .replace(/\bwhere\b/gi, 'WHERE')
-              .replace(/\band\b/gi, 'AND')
-              .replace(/\bor\b/gi, 'OR')
-              .replace(/\blimit\b/gi, 'LIMIT');
-            
-            // Add optimization suggestions based on context
-            if (request.fullFileContext.includes('users') && correctedCode.includes('SELECT *')) {
-              correctedCode = correctedCode.replace(/SELECT \*/, 'SELECT id, name, email, status');
-            }
-            
-          } else if (request.language === 'python') {
-            // Enhanced Python with best practices
-            if (correctedCode.includes('for') && !correctedCode.includes('enumerate')) {
-              correctedCode = `# Enhanced with enumerate for better indexing\n${correctedCode}`;
+              .replace(/\band\b/gi, 'AND');
+          } else if (request.language === 'javascript') {
+            if (transformedCode.includes('for') && !transformedCode.includes('const ')) {
+              transformedCode = transformedCode.replace(/var /g, 'const ');
             }
           }
-        }
-        
-        // Handle custom user instructions
-        if (request.userInstructions) {
-          if (request.userInstructions.toLowerCase().includes('comment')) {
-            if (request.language === 'sql') {
-              correctedCode = `-- ${request.userInstructions}\n${correctedCode}`;
-            } else if (request.language === 'python') {
-              correctedCode = `# ${request.userInstructions}\n${correctedCode}`;
+          
+        } else if (instructions.includes('generate') || instructions.includes('create') || instructions.includes('implement')) {
+          // GENERATION MODE: Create new code based on context
+          if (request.selectedMentions && request.selectedMentions.length > 0) {
+            const mention = request.selectedMentions[0];
+            if (mention.excelData) {
+              const { headers, rowData } = mention.excelData;
+              if (request.language === 'python') {
+                transformedCode = `# Generated code based on ${mention.name}\ndata = {\n${headers.map((h, i) => `    '${h}': '${rowData[i] || ''}'`).join(',\n')}\n}`;
+              } else if (request.language === 'javascript') {
+                transformedCode = `// Generated code based on ${mention.name}\nconst data = {\n${headers.map((h, i) => `  ${h}: '${rowData[i] || ''}'`).join(',\n')}\n};`;
+              }
             } else {
-              correctedCode = `// ${request.userInstructions}\n${correctedCode}`;
+              transformedCode = `// Generated code based on ${mention.name}\n${transformedCode}`;
             }
+          }
+          
+        } else {
+          // DEFAULT MODE: Basic improvements
+          transformedCode = transformedCode.trim();
+          if (request.language === 'javascript' && !transformedCode.includes('//')) {
+            transformedCode = `// Improved code\n${transformedCode}`;
           }
         }
         
-        // If no changes were made in fix mode, just clean up whitespace
-        if (correctedCode === request.code && request.correctionMode === 'fix') {
-          correctedCode = request.code.trim();
+        // If no changes were made, at least clean up whitespace
+        if (transformedCode === request.code) {
+          transformedCode = request.code.trim();
         }
         
-        resolve({ 
-          correctedCode,
-          mode: request.correctionMode,
-          hasChanges: correctedCode !== request.code
+        // Return unified format
+        resolve({
+          success: true,
+          data: {
+            transformedCode: transformedCode,
+            changes: {
+              linesAdded: transformedCode.split('\n').length - request.code.split('\n').length,
+              linesModified: transformedCode !== request.code ? 1 : 0,
+              transformationType: "simulation"
+            }
+          },
+          message: "Code transformed using offline simulation mode",
+          timestamp: new Date().toISOString()
         });
       }, 1500);
     });
@@ -2923,6 +3004,9 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                           onGitCommit={handleGitCommit}
                           onCodeCorrection={handleCodeCorrection}
                           wordWrap={wordWrap}
+                          getAllAvailableFiles={getAllAvailableFiles}
+                          additionalFiles={{ memoryFiles, excelFiles }}
+                          showToast={showToast}
                         />
                       </div>
                     );
@@ -2972,6 +3056,9 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                           onGitCommit={handleGitCommit}
                           onCodeCorrection={handleCodeCorrection}
                           wordWrap={wordWrap}
+                          getAllAvailableFiles={getAllAvailableFiles}
+                          additionalFiles={{ memoryFiles, excelFiles }}
+                          showToast={showToast}
                         />
                       </div>
                     );
@@ -2986,6 +3073,9 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                         onGitCommit={handleGitCommit}
                         onCodeCorrection={handleCodeCorrection}
                         wordWrap={wordWrap}
+                        getAllAvailableFiles={getAllAvailableFiles}
+                        additionalFiles={{ memoryFiles, excelFiles }}
+                        showToast={showToast}
                       />
                     );
                   }
@@ -3338,6 +3428,22 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
         <ConnectionConfigModal
           onClose={() => setShowConnectionModal(false)}
         />
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <div
+          className={`fixed top-4 right-4 z-50 p-3 rounded-lg shadow-lg transition-all duration-300 ${
+            toast.type === 'error' ? 'bg-red-500 text-white' :
+            toast.type === 'success' ? 'bg-green-500 text-white' :
+            'bg-yellow-500 text-black'
+          }`}
+          style={{
+            animation: 'fadeIn 0.3s ease-in-out'
+          }}
+        >
+          {toast.message}
+        </div>
       )}
     </div>
   );

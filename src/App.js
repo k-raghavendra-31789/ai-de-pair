@@ -104,26 +104,29 @@ const VSCodeInterface = () => {
   // Function to get all files from FileExplorer
   const getAllAvailableFiles = () => {
     if (fileExplorerRef.current && fileExplorerRef.current.getAllFiles) {
-      return fileExplorerRef.current.getAllFiles();
+      const files = fileExplorerRef.current.getAllFiles();
+      console.log('🔍 App.js getAllAvailableFiles:', files.length, files.slice(0, 3));
+      return files;
     }
+    console.log('🚨 App.js getAllAvailableFiles: FileExplorer ref not available');
     return [];
   };
 
   // Function to get open tabs from MainEditor
-  const getOpenTabs = () => {
+  const getOpenTabs = useCallback(() => {
     if (mainEditorRef.current && mainEditorRef.current.getOpenTabs) {
       return mainEditorRef.current.getOpenTabs();
     }
     return openTabs;
-  };
+  }, [openTabs]);
 
   // Function to get Excel files from MainEditor
-  const getExcelFiles = () => {
+  const getExcelFiles = useCallback(() => {
     if (mainEditorRef.current && mainEditorRef.current.getExcelFiles) {
       return mainEditorRef.current.getExcelFiles();
     }
     return excelFiles;
-  };
+  }, [excelFiles]);
 
   // Update open tabs when they change in MainEditor
   useEffect(() => {
@@ -137,7 +140,7 @@ const VSCodeInterface = () => {
     // Update tabs periodically or when MainEditor changes
     const interval = setInterval(updateOpenTabs, 1000);
     return () => clearInterval(interval);
-  }, [updateTabs, setExcelData]);
+  }, [updateTabs, setExcelData, getExcelFiles, getOpenTabs]);
 
   // Update available files when FileExplorer changes
   const handleFilesUpdate = useCallback((files) => {
@@ -175,7 +178,7 @@ const VSCodeInterface = () => {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, []); // Empty dependency array since toggleTerminal doesn't need to be reactive
+  }, [toggleTerminal]); // Include toggleTerminal dependency
 
   return (
     <div 
@@ -209,6 +212,7 @@ const VSCodeInterface = () => {
               onFileOpen={handleFileOpen}
               ref={mainEditorRef}
               isTerminalVisible={isTerminalVisible}
+              getAllAvailableFiles={getAllAvailableFiles}
             />
           </div>
           
