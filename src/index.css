@@ -2,7 +2,7 @@
 
 /* Apply optimized font stack with better rendering for clarity */
 * {
-  font-family: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-family: 'Fira Code', 'JetBrains Mono', 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   font-weight: 400;
   /* Better font rendering for clarity */
   -webkit-font-smoothing: antialiased;
@@ -10,6 +10,20 @@
   text-rendering: optimizeLegibility;
   font-feature-settings: "kern" 1;
   font-variant-ligatures: common-ligatures;
+}
+
+/* Enhanced Monaco Editor font rendering */
+.monaco-editor {
+  font-feature-settings: "liga" 1, "calt" 1, "clig" 1, "kern" 1;
+  font-variant-ligatures: common-ligatures;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Better subpixel rendering for code */
+.monaco-editor .view-line {
+  text-rendering: optimizeLegibility;
 }
 
 /* Ensure better font weight for light mode */

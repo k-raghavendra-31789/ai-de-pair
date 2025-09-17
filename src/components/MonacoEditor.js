@@ -779,7 +779,9 @@ const MonacoEditor = ({
         fontSize: 15,
         fontWeight: '500',
         fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Mono', 'Roboto Mono', Consolas, 'Ubuntu Mono', monospace",
-        lineHeight: 1.5,
+        fontLigatures: true,  // Enable programming ligatures
+        lineHeight: 1.6,  // Slightly increased for better readability
+        letterSpacing: 0.5,  // Better character spacing
         minimap: { enabled: false },
         scrollBeyondLastLine: false,  // Disable to prevent layout issues
         scrollBeyondLastColumn: 20,   // Reduced padding for horizontal scroll
@@ -788,6 +790,9 @@ const MonacoEditor = ({
         lineNumbers: 'on',
         renderLineHighlight: 'line',
         selectOnLineNumbers: true,
+        smoothScrolling: true,  // Enable smooth scrolling
+        cursorBlinking: 'blink',  // Better cursor visibility
+        renderWhitespace: 'none',  // Clean appearance
         roundedSelection: false,
         readOnly: false,
         cursorStyle: 'line',
@@ -813,8 +818,7 @@ const MonacoEditor = ({
         // Enhanced horizontal scrolling options
         columnSelection: false,
         mouseWheelScrollSensitivity: 1,
-        fastScrollSensitivity: 5,
-        smoothScrolling: true
+        fastScrollSensitivity: 5
       });
 
       monacoInstance.current = editor;
@@ -1761,6 +1765,8 @@ const MonacoEditor = ({
           fontSize: 15,
           fontWeight: '500',
           fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Mono', 'Roboto Mono', Consolas, 'Ubuntu Mono', monospace",
+          fontLigatures: true,  // Enable programming ligatures
+          letterSpacing: 0.5,  // Better character spacing
           scrollbar: {
             vertical: 'auto',
             horizontal: 'auto',
