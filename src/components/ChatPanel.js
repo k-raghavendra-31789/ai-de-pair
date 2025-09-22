@@ -1849,7 +1849,7 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
                   console.log(`📝 Creating new ${fileConfig.displayName} file with streaming:`, fileName, 'with ID:', memoryFileId, '| Format:', effectiveOutputFormat);
                   
                   // Create empty memory file and start streaming
-                  addMemoryFile(memoryFileId, fileName, fileConfig.type, '');
+                  addMemoryFile(memoryFileId, fileName, '', fileConfig.type);
                   startMemoryFileStreaming(memoryFileId);
                   console.log(`🌊 Started streaming for new ${fileConfig.displayName} file`);
                   
