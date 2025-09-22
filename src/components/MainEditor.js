@@ -6,6 +6,7 @@ import MonacoEditor from './MonacoEditor';
 import ExcelViewer from './ExcelViewer';
 import VersionHistory from './VersionHistory';
 import ConnectionConfigModal from './ConnectionConfigModal';
+import aiErrorCorrectionService from '../services/AIErrorCorrectionService';
 import { FaDownload, FaCodeBranch, FaPlay, FaGitAlt, FaCog, FaInfoCircle, FaLightbulb, FaTimes, FaCheck, FaDatabase, FaPlug, FaCheckCircle, FaExclamationTriangle } from 'react-icons/fa';
 import { BiGitPullRequest, BiGitBranch } from 'react-icons/bi';
 import { VscGithub, VscGitPullRequest } from 'react-icons/vsc';
@@ -1003,6 +1004,29 @@ const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible, ge
       userInstructions: userInstructions || 'No specific instructions',
       selectedMentions: selectedMentions.length > 0 ? selectedMentions.map(m => ({ type: m.type, name: m.name })) : 'None'
     });
+
+    // Check if we have error correction context available
+    const hasErrorContext = aiErrorCorrectionService.isErrorCorrectionActive();
+    
+    if (hasErrorContext) {
+      console.log('🎯 Using AI Error Correction Service for error-based correction');
+      
+      try {
+        // Use the error correction service
+        const correctionCallback = aiErrorCorrectionService.createCorrectionCallback(context.language);
+        const correctedCode = await correctionCallback(selectedCode, context, userInstructions, selectedMentions);
+        
+        console.log('✅ Error correction completed via AIErrorCorrectionService');
+        return correctedCode;
+        
+      } catch (error) {
+        console.error('❌ Error correction failed:', error);
+        throw error;
+      }
+    }
+
+    // Fallback to existing transformation API for non-error corrections
+    console.log('🔄 Using existing transformation API');
 
     // Prepare the transformation request (generalized from correction)
     const transformRequest = {

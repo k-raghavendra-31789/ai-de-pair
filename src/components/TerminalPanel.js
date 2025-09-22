@@ -1,11 +1,22 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTheme } from './ThemeContext';
 import { useAppState } from '../contexts/AppStateContext';
+import { useErrorCorrection } from '../hooks/useErrorCorrection';
+import aiErrorCorrectionService from '../services/AIErrorCorrectionService';
 import { IoClose, IoTerminal } from 'react-icons/io5';
 
 const TerminalPanel = ({ onHeaderMouseDown }) => {
   const { colors } = useTheme();
   const { state, actions } = useAppState();
+  
+  // Error correction functionality
+  const {
+    isErrorCorrectionMode,
+    currentError,
+    initializeErrorCorrection,
+    exitErrorCorrectionMode,
+    hasActiveError
+  } = useErrorCorrection();
   
   // Get terminal state from context with defensive checks
   const { panelSizes, isTerminalVisible, isResizing, sqlExecution = {} } = state || {};
@@ -63,6 +74,28 @@ const TerminalPanel = ({ onHeaderMouseDown }) => {
       errorKeys: displayData?.results?.error ? Object.keys(displayData?.results?.error) : 'none'
     });
   }
+
+  // Error detection and context extraction
+  useEffect(() => {
+    if (displayData) {
+      const errorContext = aiErrorCorrectionService.extractErrorContext(displayData);
+      
+      // If we detect an error and not already in correction mode, set up the context
+      if (errorContext.hasError && !isErrorCorrectionMode) {
+        aiErrorCorrectionService.setErrorContext(errorContext);
+        console.log('🎯 TerminalPanel: Error detected and context set:', {
+          errorType: errorContext.errorType,
+          hasError: errorContext.hasError
+        });
+      }
+      
+      // If error is resolved, exit correction mode
+      if (!errorContext.hasError && isErrorCorrectionMode) {
+        exitErrorCorrectionMode();
+        console.log('🎯 TerminalPanel: Error resolved, exiting correction mode');
+      }
+    }
+  }, [displayData, isErrorCorrectionMode, exitErrorCorrectionMode]);
 
   // Handle tab switching
   const handleTabClick = (tabId) => {
@@ -188,7 +221,39 @@ const TerminalPanel = ({ onHeaderMouseDown }) => {
                     </div>
                   </div>
                 ) : displayData.error || (displayData.results?.status === 'error') ? (
-                  <div className={`text-red-300 dark:text-red-400 ${colors.secondary} rounded border border-red-300 dark:border-red-700 select-text error-text`}>
+                  <div className={`text-red-300 dark:text-red-400 ${colors.secondary} rounded border border-red-300 dark:border-red-700 select-text error-text relative`}>
+                    {/* Error correction controls - only show when error context is available */}
+                    {aiErrorCorrectionService.getErrorContext()?.hasError && (
+                      <div className="absolute top-2 right-2 z-10 flex gap-2">
+                        {/* AI Fix Button */}
+                        <button
+                          onClick={() => {
+                            const errorContext = aiErrorCorrectionService.getErrorContext();
+                            if (errorContext?.hasError) {
+                              console.log('🎯 TerminalPanel: AI Fix button clicked, activating error correction mode');
+                              
+                              // Initialize error correction mode and notify parent
+                              initializeErrorCorrection(errorContext, (context) => {
+                                // Dispatch custom event to notify MonacoEditor to activate correction mode
+                                const correctionEvent = new CustomEvent('activateErrorCorrection', {
+                                  detail: {
+                                    errorContext: context,
+                                    source: 'terminal'
+                                  }
+                                });
+                                window.dispatchEvent(correctionEvent);
+                              });
+                            }
+                          }}
+                          className="bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 border border-purple-400/50 rounded-lg px-4 py-2 text-sm text-white flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-purple-500/25 hover:scale-105 font-medium"
+                          title="Fix this error with AI"
+                        >
+                          <span>✨</span>
+                          <span>AI Fix</span>
+                        </button>
+                      </div>
+                    )}
+                    
                     <div className="font-medium mb-2 select-text">Query Error:</div>
                     <pre className="text-sm whitespace-pre-wrap select-text cursor-text error-text" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
                       {(() => {
@@ -206,10 +271,6 @@ const TerminalPanel = ({ onHeaderMouseDown }) => {
                           // If error is an object with message
                           if (resultError.message) {
                             return resultError.message;
-                          }
-                          // If error is an object with type and message
-                          if (resultError.type && resultError.message) {
-                            return `${resultError.type}: ${resultError.message}`;
                           }
                           // If error is just a string
                           if (typeof resultError === 'string') {

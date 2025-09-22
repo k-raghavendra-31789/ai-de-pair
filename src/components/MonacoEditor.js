@@ -133,6 +133,83 @@ const MonacoEditor = ({
     }
   }, [selectedMentions]);
 
+  // Error correction integration - listen for activation from TerminalPanel
+  useEffect(() => {
+    const handleErrorCorrectionActivation = (event) => {
+      const { errorContext, source } = event.detail;
+      
+      if (source === 'terminal' && errorContext?.hasError) {
+        console.log('🎯 MonacoEditor: Error correction activated from terminal:', {
+          errorType: errorContext.errorType,
+          errorMessage: errorContext.errorMessage?.substring(0, 100) + '...'
+        });
+        
+        // Activate the inline correction toolbar with error context
+        if (editorRef.current) {
+          // Get current selection or entire content
+          const selection = editorRef.current.getSelection();
+          const model = editorRef.current.getModel();
+          
+          let selectedText = '';
+          let range = null;
+          
+          if (selection && !selection.isEmpty()) {
+            selectedText = model.getValueInRange(selection);
+            range = selection;
+          } else {
+            // If no selection, use entire content
+            selectedText = model.getValue();
+            range = model.getFullModelRange();
+          }
+          
+          // Set up the correction interface with error context pre-filled
+          setSelectedCode(selectedText);
+          setSelectionRange(range);
+          setShowCorrectionToolbar(true);
+          setShowInstructionsArea(true);
+          
+          // Pre-fill instructions with error context
+          const errorInstructions = errorContext.errorMessage;
+          setUserInstructions(errorInstructions);
+          
+          // Position the toolbar
+          const editorDom = editorRef.current.getDomNode();
+          if (editorDom) {
+            const rect = editorDom.getBoundingClientRect();
+            setToolbarPosition({
+              x: rect.left + rect.width / 2,
+              y: rect.top + 100
+            });
+          }
+          
+          // Focus the textarea and position cursor at the end of error message
+          setTimeout(() => {
+            if (instructionsTextareaRef.current) {
+              instructionsTextareaRef.current.focus();
+              
+              // Auto-resize textarea to fit the error message content
+              instructionsTextareaRef.current.style.height = 'auto';
+              instructionsTextareaRef.current.style.height = Math.max(60, instructionsTextareaRef.current.scrollHeight) + 'px';
+              
+              // Move cursor to end of the pre-filled error message
+              const length = instructionsTextareaRef.current.value.length;
+              instructionsTextareaRef.current.setSelectionRange(length, length);
+            }
+          }, 100);
+          
+          console.log('✅ MonacoEditor: Error correction interface activated with existing correction flow');
+        }
+      }
+    };
+
+    // Listen for error correction activation events
+    window.addEventListener('activateErrorCorrection', handleErrorCorrectionActivation);
+    
+    return () => {
+      window.removeEventListener('activateErrorCorrection', handleErrorCorrectionActivation);
+    };
+  }, []);
+
   // Helper function to check if file is Excel
   const isExcelFile = useCallback((fileName) => {
     const excelExtensions = ['.xlsx', '.xls', '.csv'];
@@ -1182,12 +1259,24 @@ const MonacoEditor = ({
         endColumn: selection.endColumn
       }, customInstructions, selectedMentions);
       
+      console.log('📥 MonacoEditor: Received corrected code from onCodeCorrection:', {
+        hasCorrectedCode: !!correctedCode,
+        codeLength: correctedCode?.length,
+        isDifferent: correctedCode !== selectedText,
+        originalLength: selectedText?.length,
+        correctedPreview: correctedCode?.substring(0, 100) + '...',
+        originalPreview: selectedText?.substring(0, 100) + '...'
+      });
+      
       // Hide spinner before showing diff
       hideProcessingSpinner();
       
       // If we get corrected code, show inline diff instead of modal
       if (correctedCode && correctedCode !== selectedText) {
+        console.log('✅ MonacoEditor: Showing inline diff with corrected code');
         showInlineDiff(selectedText, correctedCode, selection);
+      } else {
+        console.log('⚠️ MonacoEditor: Not showing diff - no corrected code or code is identical');
       }
     } catch (error) {
       console.error('Code correction failed:', error);
@@ -1663,10 +1752,20 @@ const MonacoEditor = ({
   }, [inlineDiffDecorations, inlineDiffWidget]);
 
   const showInlineDiff = useCallback((originalText, correctedText, selection) => {
-    console.log('showInlineDiff called with:', { originalText, correctedText, selection });
+    console.log('🎯 showInlineDiff called with:', {
+      hasOriginalText: !!originalText,
+      originalLength: originalText?.length,
+      originalPreview: originalText?.substring(0, 100) + '...',
+      hasCorrectedText: !!correctedText,
+      correctedLength: correctedText?.length,
+      correctedPreview: correctedText?.substring(0, 100) + '...',
+      hasSelection: !!selection,
+      selectionRange: selection ? `${selection.startLineNumber}:${selection.startColumn}-${selection.endLineNumber}:${selection.endColumn}` : 'None'
+    });
+    
     const editor = monacoInstance.current;
     if (!editor) {
-      console.log('No editor found');
+      console.log('❌ showInlineDiff: No editor found');
       return;
     }
 
@@ -1676,7 +1775,7 @@ const MonacoEditor = ({
     setDiffSelection(selection);
     setInlineDiffActive(true);
 
-    console.log('Creating decorations...');
+    console.log('✅ showInlineDiff: State updated, creating decorations...');
     // Don't replace the text immediately, instead show comparison widget
     // Add decorations to highlight the original area
     const decorations = editor.deltaDecorations([], [
@@ -1964,16 +2063,17 @@ const MonacoEditor = ({
                     : 'border-gray-300 bg-white text-gray-900 placeholder-gray-400 focus:border-gray-400'
                 } focus:outline-none focus:ring-1 focus:ring-blue-500`}
                 autoFocus
-                rows={1}
+                rows={3}
                 style={{
-                  minHeight: '34px',
+                  minHeight: '60px',
+                  maxHeight: '200px',
                   height: 'auto',
-                  overflow: 'hidden'
+                  overflow: 'auto'
                 }}
                 onInput={(e) => {
                   // Auto-resize textarea
                   e.target.style.height = 'auto';
-                  e.target.style.height = Math.max(34, e.target.scrollHeight) + 'px';
+                  e.target.style.height = Math.min(200, Math.max(60, e.target.scrollHeight)) + 'px';
                 }}
                 onKeyDown={(e) => {
                   // Handle @mentions navigation first
