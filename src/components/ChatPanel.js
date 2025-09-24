@@ -199,6 +199,286 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
     return 'SQL generation completed';
   };
 
+  // Drag and Drop Handlers
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    try {
+      const droppedData = e.dataTransfer.getData('text/plain');
+      console.log('🎯 Dropped data:', droppedData);
+      
+      if (droppedData) {
+        // Try to parse as JSON (from FileExplorer)
+        try {
+          const fileData = JSON.parse(droppedData);
+          console.log('📁 Parsed file data:', fileData);
+          
+          await handleDroppedFile(fileData);
+        } catch (parseError) {
+          // Not JSON, treat as plain text
+          console.log('📝 Plain text drop:', droppedData);
+          showToast('Plain text drops are not supported yet. Please drag files from File Explorer.', 'warning');
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error handling drop:', error);
+      showToast('Error processing dropped file', 'error');
+    }
+  };
+
+  const handleDroppedFile = async (fileData) => {
+    try {
+      console.log('🔍 Processing dropped file:', fileData);
+      
+      // Create a mention object from the dropped file data
+      let mention = {
+        id: `${fileData.name}-file-${Date.now()}-${Math.random()}`,
+        name: fileData.name,
+        type: 'file', // Default to @file mention
+        source: fileData.isGitHubFile ? 'github' : fileData.isCloudFile ? 'cloud' : 'local',
+        isGitHub: fileData.isGitHubFile || false,
+        isCloud: fileData.isCloudFile || false
+      };
+
+      // Handle different file sources
+      if (fileData.isGitHubFile) {
+        // GitHub file
+        mention.path = fileData.path;
+        mention.repoInfo = fileData.repoInfo;
+        mention.downloadUrl = fileData.downloadUrl;
+        
+        // Add file content if available
+        if (fileData.content) {
+          if (isExcelFile(fileData.name)) {
+            // For Excel files, we need to parse and structure the content properly
+            try {
+              // Parse Excel content using XLSX
+              const workbook = XLSX.read(fileData.content, { type: 'binary' });
+              const sheetNames = workbook.SheetNames;
+              const fullExcelContent = {
+                fileName: fileData.name,
+                sheets: {}
+              };
+              
+              // Extract all sheets and their data
+              sheetNames.forEach(sheetName => {
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                
+                if (jsonData.length > 0) {
+                  const headers = jsonData[0] || [];
+                  const rows = jsonData.slice(1);
+                  
+                  fullExcelContent.sheets[sheetName] = {
+                    headers: headers,
+                    rows: rows,
+                    totalRows: rows.length
+                  };
+                }
+              });
+              
+              mention.fileContent = {
+                type: 'excel',
+                content: fullExcelContent,
+                contentString: JSON.stringify(fullExcelContent, null, 2)
+              };
+            } catch (error) {
+              console.warn('Failed to parse Excel content for dropped GitHub file:', error);
+              mention.fileContent = {
+                type: 'text',
+                content: fileData.content
+              };
+            }
+          } else {
+            mention.fileContent = {
+              type: 'text',
+              content: fileData.content
+            };
+          }
+        }
+      } else if (fileData.isCloudFile) {
+        // Cloud file
+        mention.path = fileData.path;
+        mention.provider = fileData.provider;
+        mention.downloadUrl = fileData.downloadUrl;
+        
+        // Add file content if available
+        if (fileData.content) {
+          if (isExcelFile(fileData.name)) {
+            // For Excel files, we need to parse and structure the content properly
+            try {
+              // Parse Excel content using XLSX
+              const workbook = XLSX.read(fileData.content, { type: 'binary' });
+              const sheetNames = workbook.SheetNames;
+              const fullExcelContent = {
+                fileName: fileData.name,
+                sheets: {}
+              };
+              
+              // Extract all sheets and their data
+              sheetNames.forEach(sheetName => {
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                
+                if (jsonData.length > 0) {
+                  const headers = jsonData[0] || [];
+                  const rows = jsonData.slice(1);
+                  
+                  fullExcelContent.sheets[sheetName] = {
+                    headers: headers,
+                    rows: rows,
+                    totalRows: rows.length
+                  };
+                }
+              });
+              
+              mention.fileContent = {
+                type: 'excel',
+                content: fullExcelContent,
+                contentString: JSON.stringify(fullExcelContent, null, 2)
+              };
+            } catch (error) {
+              console.warn('Failed to parse Excel content for dropped cloud file:', error);
+              mention.fileContent = {
+                type: 'text',
+                content: fileData.content
+              };
+            }
+          } else {
+            mention.fileContent = {
+              type: 'text',
+              content: fileData.content
+            };
+          }
+        }
+      } else if (fileData.isLocalFile) {
+        // Local file
+        mention.path = fileData.fullPath;
+        
+        // Get file content from file handle
+        if (fileData.fileId && window.fileHandleRegistry.has(fileData.fileId)) {
+          const fileHandle = window.fileHandleRegistry.get(fileData.fileId);
+          try {
+            const file = await fileHandle.getFile();
+            
+            if (isExcelFile(fileData.name)) {
+              // For Excel files, read as array buffer and parse
+              const arrayBuffer = await file.arrayBuffer();
+              const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+              const sheetNames = workbook.SheetNames;
+              const fullExcelContent = {
+                fileName: fileData.name,
+                sheets: {}
+              };
+              
+              // Extract all sheets and their data
+              sheetNames.forEach(sheetName => {
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                
+                if (jsonData.length > 0) {
+                  const headers = jsonData[0] || [];
+                  const rows = jsonData.slice(1);
+                  
+                  fullExcelContent.sheets[sheetName] = {
+                    headers: headers,
+                    rows: rows,
+                    totalRows: rows.length
+                  };
+                }
+              });
+              
+              mention.fileContent = {
+                type: 'excel',
+                content: fullExcelContent,
+                contentString: JSON.stringify(fullExcelContent, null, 2)
+              };
+            } else {
+              // For non-Excel files, read as text
+              const content = await file.text();
+              mention.fileContent = {
+                type: 'text',
+                content: content
+              };
+            }
+          } catch (error) {
+            console.warn('Failed to read local file content:', error);
+          }
+        }
+      }
+
+      // Fallback: If no content was extracted but it's an Excel file, try to get from memory
+      if (!mention.fileContent && isExcelFile(fileData.name)) {
+        const excelData = getExcelDataForFile(fileData.name);
+        if (excelData) {
+          // Convert Excel data to JSON format with full content (same as @mention system)
+          const fullExcelContent = {
+            fileName: fileData.name,
+            sheets: {}
+          };
+          
+          // Extract all sheets and their data
+          excelData.sheetNames.forEach(sheetName => {
+            const sheetData = excelData.sheetsData[sheetName];
+            fullExcelContent.sheets[sheetName] = {
+              headers: sheetData.headers,
+              rows: sheetData.rows,
+              totalRows: sheetData.totalRows
+            };
+          });
+          
+          // Add the full Excel content to the mention
+          mention.fileContent = {
+            type: 'excel',
+            content: fullExcelContent,
+            contentString: JSON.stringify(fullExcelContent, null, 2)
+          };
+          console.log('✅ Used Excel data from memory for dropped file');
+        }
+      }
+
+      // Check for duplicates
+      const isDuplicate = selectedMentions.some(existingMention => 
+        existingMention.name === mention.name && 
+        existingMention.type === mention.type &&
+        existingMention.source === mention.source
+      );
+      
+      if (isDuplicate) {
+        showToast(`"${mention.name}" is already selected`, 'warning');
+        return;
+      }
+
+      // Add the mention
+      setSelectedMentions(prev => [...prev, mention]);
+      
+      // Show success message
+      showToast(`Added "${fileData.name}" as attachment`, 'success');
+      
+      console.log('✅ Successfully added dropped file as mention:', mention);
+      
+    } catch (error) {
+      console.error('❌ Error processing dropped file:', error);
+      showToast(`Error processing dropped file: ${error.message}`, 'error');
+    }
+  };
+
 
   // SSE Connection Management
   const startSSEConnection = (sessionId, generationId) => {
@@ -3134,8 +3414,12 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
 
   return (
     <div 
-      className={`${colors.secondary} ${colors.border} border-l flex flex-col h-full`}
+      className={`${colors.secondary} ${colors.border} border-l flex flex-col h-full relative`}
       style={{ width }}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
     >
       {/* Chat Header */}
       <div className={`p-4 ${colors.border} border-b flex items-center justify-between`}>
