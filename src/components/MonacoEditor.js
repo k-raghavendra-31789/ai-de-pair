@@ -3,6 +3,7 @@ import * as monaco from 'monaco-editor';
 import * as XLSX from 'xlsx';
 import { useTheme } from './ThemeContext';
 import { HiSparkles } from 'react-icons/hi2';
+import { SiGithub } from 'react-icons/si';
 import { useMentions } from '../hooks/useMentions';
 import MentionDropdown from './MentionDropdown';
 
@@ -216,6 +217,21 @@ const MonacoEditor = ({
     return excelExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
   }, []);
 
+  // Helper function to filter out blank rows
+  const filterBlankRows = useCallback((rows) => {
+    return rows.filter(row => {
+      // Check if row is an array and has at least one non-empty cell
+      if (Array.isArray(row)) {
+        return row.some(cell => cell && cell.toString().trim() !== '');
+      }
+      // Check if row is an object and has at least one non-empty value
+      if (typeof row === 'object' && row !== null) {
+        return Object.values(row).some(cell => cell && cell.toString().trim() !== '');
+      }
+      return false;
+    });
+  }, []);
+
   // Helper function to get Excel data from AppState
   const getExcelDataForFile = useCallback((fileName) => {
     try {
@@ -263,10 +279,13 @@ const MonacoEditor = ({
         const headers = jsonData[0] || [];
         const dataRows = jsonData.slice(1);
         
+        // Filter out blank rows
+        const filteredRows = filterBlankRows(dataRows);
+        
         sheetsData[sheetName] = {
           headers,
-          rows: dataRows,
-          totalRows: dataRows.length
+          rows: filteredRows,
+          totalRows: filteredRows.length
         };
       });
       
@@ -283,7 +302,7 @@ const MonacoEditor = ({
       console.error('Error parsing Excel file:', error);
       return null;
     }
-  }, [additionalFiles]);
+  }, [additionalFiles, filterBlankRows]);
 
   // Handle Excel row selection
   const handleExcelRowSelect = useCallback((rowData, rowIndex, sheetName) => {
@@ -514,9 +533,9 @@ const MonacoEditor = ({
           { token: 'string', foreground: '008000' },
           { token: 'string.sql', foreground: '008000' },
           { token: 'string.python', foreground: '008000' },
-          { token: 'comment', foreground: '999999' },
-          { token: 'comment.sql', foreground: '999999' },
-          { token: 'comment.python', foreground: '999999' },
+          { token: 'comment', foreground: '228B22' },
+          { token: 'comment.sql', foreground: '228B22' },
+          { token: 'comment.python', foreground: '228B22' },
           { token: 'number', foreground: '800080' },
           { token: 'number.sql', foreground: '800080' },
           { token: 'number.python', foreground: '800080' },
@@ -854,11 +873,11 @@ const MonacoEditor = ({
         theme: theme === 'dark' ? 'simple-dark' : 'simple-light',
         automaticLayout: true,
         fontSize: 15,
-        fontWeight: '500',
+        fontWeight: '600',
         fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Mono', 'Roboto Mono', Consolas, 'Ubuntu Mono', monospace",
         fontLigatures: true,  // Enable programming ligatures
         lineHeight: 1.6,  // Slightly increased for better readability
-        letterSpacing: 0.5,  // Better character spacing
+        letterSpacing: 0.8,  // Slightly increased character spacing
         minimap: { enabled: false },
         scrollBeyondLastLine: false,  // Disable to prevent layout issues
         scrollBeyondLastColumn: 20,   // Reduced padding for horizontal scroll
@@ -1862,10 +1881,10 @@ const MonacoEditor = ({
           renderIndicators: true,
           originalEditable: false,
           fontSize: 15,
-          fontWeight: '500',
+          fontWeight: '600',
           fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Mono', 'Roboto Mono', Consolas, 'Ubuntu Mono', monospace",
           fontLigatures: true,  // Enable programming ligatures
-          letterSpacing: 0.5,  // Better character spacing
+          letterSpacing: 0.8,  // Slightly increased character spacing
           scrollbar: {
             vertical: 'auto',
             horizontal: 'auto',
@@ -2035,7 +2054,7 @@ const MonacoEditor = ({
                           </span>
                         )}
                         <span className="text-xs">
-                          {mention.source === 'github' ? '📁' : 
+                          {mention.source === 'github' ? <SiGithub className="inline" /> : 
                            mention.source === 'cloud' ? '☁️' : 
                            mention.source === 'memory' ? '🧠' : '💻'}
                         </span>

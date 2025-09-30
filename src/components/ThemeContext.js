@@ -83,9 +83,9 @@ export const ThemeProvider = ({ children }) => {
       quaternary: 'bg-gray-200',
       text: 'text-gray-800 font-medium', // Darker and medium weight
       textSecondary: 'text-gray-600 font-medium', // Darker and medium weight  
-      textMuted: 'text-gray-500 font-normal', // Darker muted text
-      border: 'border-gray-300',
-      borderLight: 'border-gray-200',
+      textMuted: 'text-gray-700 font-normal', // Much darker muted text for better visibility
+      border: 'border-gray-400',
+      borderLight: 'border-gray-300', // Darker borders for table cells
       hover: 'hover:bg-gray-100',
       active: 'bg-gray-100',
       accent: 'text-blue-700 font-medium', // Darker blue with medium weight
