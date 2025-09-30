@@ -10,6 +10,7 @@ import aiErrorCorrectionService from '../services/AIErrorCorrectionService';
 import { FaDownload, FaCodeBranch, FaPlay, FaGitAlt, FaCog, FaInfoCircle, FaLightbulb, FaTimes, FaCheck, FaDatabase, FaPlug, FaCheckCircle, FaExclamationTriangle } from 'react-icons/fa';
 import { BiGitPullRequest, BiGitBranch } from 'react-icons/bi';
 import { VscGithub, VscGitPullRequest } from 'react-icons/vsc';
+import { SiGithub } from 'react-icons/si';
 import { connectionManager } from '../services/ConnectionManager';
 
 const MainEditor = forwardRef(({ selectedFile, onFileOpen, isTerminalVisible, getAllAvailableFiles }, ref) => {
@@ -2366,9 +2367,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
     e.stopPropagation();
     
     dragCounterRef.current++;
-    if (dragCounterRef.current === 1) {
-      setDragOver(true);
-    }
+    // Removed setDragOver(true) to eliminate blue flash
   };
 
   const handleDragLeave = (e) => {
@@ -2376,9 +2375,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
     e.stopPropagation();
     
     dragCounterRef.current--;
-    if (dragCounterRef.current === 0) {
-      setDragOver(false);
-    }
+    // Removed setDragOver(false) to eliminate blue flash
   };
 
   const handleDrop = async (e) => {
@@ -2386,7 +2383,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
     e.stopPropagation();
     
     dragCounterRef.current = 0;
-    setDragOver(false);
+    // Removed setDragOver(false) to eliminate blue flash
     
     // Get the dropped file data
     const data = e.dataTransfer.getData('text/plain');
@@ -2538,6 +2535,13 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                 </span>
               )}
               
+              {/* GitHub File Indicator */}
+              {isGitHubFile(tab.id) && (
+                <span className="text-xs mr-1 flex items-center" title="GitHub File">
+                  <SiGithub className="w-3 h-3 text-gray-600 dark:text-gray-400" />
+                </span>
+              )}
+              
               {/* File Name */}
               <span className={`text-sm truncate flex-1 ${isDeleted ? `${colors.error} line-through` : ''}`}>
                 {tab.name}{tab.isDirty ? '*' : ''}
@@ -2598,46 +2602,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               {wordWrap ? '↵' : '↔'}
             </button>
             
-            <button
-              onClick={() => {
-                if (!deletedFiles.has(activeTab.name)) {
-                  const content = fileContents[activeTab.id] || '';
-                  saveFileContent(activeTab.name, content);
-                }
-              }}
-              disabled={deletedFiles.has(activeTab.name)}
-              className={`px-2 py-1 text-xs ${colors.border} rounded ${
-                deletedFiles.has(activeTab.name) 
-                  ? `${colors.textMuted} cursor-not-allowed opacity-50` 
-                  : `${colors.textSecondary} hover:${colors.text}`
-              }`}
-            >
-              Save
-            </button>
-            <button
-              onClick={async () => {
-                try {
-                  const content = fileContents[activeTab.id] || '';
-                  const fileHandle = await window.showSaveFilePicker({
-                    suggestedName: activeTab.name,
-                    types: [{
-                      description: 'Files',
-                      accept: { '*/*': [] }
-                    }]
-                  });
-                  
-                  const writable = await fileHandle.createWritable();
-                  await writable.write(content);
-                  await writable.close();
-                  
-                } catch (error) {
-                  // Save As cancelled or failed
-                }
-              }}
-              className={`px-2 py-1 text-xs ${colors.textSecondary} hover:${colors.text} ${colors.border} rounded`}
-            >
-              Save As
-            </button>
+            {/* Save and Save As buttons - Hidden per user request */}
             
             {/* Download button for GitHub files */}
             {isGitHubFile(activeTab?.id) && (
@@ -2651,22 +2616,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               </button>
             )}
             
-            {/* Version History button for memory files - Debug mode */}
-            {activeTab?.type === 'memory' && (
-              <button
-                onClick={() => setShowVersionHistory(true)}
-                className={`px-2 py-1 text-xs ${colors.textSecondary} hover:${colors.text} ${colors.border} rounded flex items-center gap-1`}
-                title={`View version history (${memoryFiles[activeTab.fileId]?.versions?.length || 0} versions) - Debug: ID=${activeTab.id}, Type=${activeTab.type}`}
-              >
-                <span className="text-xs">📝</span>
-                History
-                {memoryFiles[activeTab.fileId]?.versions?.length > 0 && (
-                  <span className="text-xs bg-blue-600 text-white rounded-full px-1 ml-1">
-                    {memoryFiles[activeTab.fileId].versions.length}
-                  </span>
-                )}
-              </button>
-            )}
+            {/* Version History button for memory files - Hidden per user request */}
 
             {/* Run Code Button - Show for SQL and Python files */}
             {(activeTab?.name.toLowerCase().endsWith('.sql') || activeTab?.name.toLowerCase().endsWith('.py')) && (
@@ -2884,23 +2834,13 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
       <div 
         className={`
           flex-1 ${colors.primary} relative flex flex-col overflow-hidden
-          ${dragOver ? `${colors.accentBg} bg-opacity-20 border-2 ${colors.accent.replace('text-', 'border-')} border-dashed` : ''}
         `}
         onDragOver={handleDragOver}
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {/* Drop Overlay */}
-        {dragOver && (
-          <div className={`absolute inset-0 flex items-center justify-center ${colors.accentBg} bg-opacity-90 z-50 backdrop-blur-sm`}>
-            <div className={`text-center text-white`}>
-              <div className="text-4xl mb-4">⊞</div>
-              <div className="text-xl font-semibold">Drop file here to open</div>
-              <div className="text-sm opacity-75">Release to add file to tabs</div>
-            </div>
-          </div>
-        )}
+        {/* Drop functionality preserved without visual feedback */}
 
         {openTabs.length === 0 ? (
           // Welcome Screen with Large Logo
@@ -2908,7 +2848,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
             <div className="flex flex-col items-center space-y-6 max-w-md text-center p-6">
               {/* Large Logo */}
               <img 
-                src="/logo.png" 
+                src="/DataMonk-Gray.png" 
                 alt="DataMonk Logo" 
                 className="w-32 h-auto opacity-90 hover:opacity-100 transition-opacity duration-300"
               />
@@ -2984,7 +2924,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                     className={`flex items-center gap-1 px-2 py-1 text-xs ${colors.textMuted} hover:${colors.text} hover:${colors.accentBg} hover:bg-opacity-20 rounded transition-colors`}
                     title={`Git commit ${activeTab.type === 'memory' ? 'memory file' : 'file'}: ${activeTab.name}`}
                   >
-                    <FaGitAlt size={12} />
+                    <SiGithub size={16} />
                     <span>Commit</span>
                   </button>
                 )}

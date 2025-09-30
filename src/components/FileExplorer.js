@@ -22,7 +22,8 @@ import {
   FaHtml5,
   FaCss3Alt,
   FaMarkdown,
-  FaCodeBranch
+  FaCodeBranch,
+  FaChevronRight
 } from 'react-icons/fa';
 import { 
   SiJavascript, 
@@ -1706,29 +1707,8 @@ const FileExplorer = forwardRef(({ selectedFile, setSelectedFile, width, onFileR
               style={{ paddingLeft }}
             >
               <span className={`mr-1 text-xs ${colors.textMuted} transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''} ${!item.handle && !item.isGitHub && !item.isCloud ? 'opacity-30' : ''}`}>
-                {!item.handle && !item.isGitHub && !item.isCloud ? (
-                  // Show lock icon for folders that need reconnection
-                  <svg 
-                    width="20" 
-                    height="20" 
-                    viewBox="0 0 16 16" 
-                    fill="currentColor"
-                    className="inline-block"
-                  >
-                    <path d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2zm3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/>
-                  </svg>
-                ) : (
-                  // Normal expand/collapse arrow
-                  <svg 
-                    width="20" 
-                    height="20" 
-                    viewBox="0 0 16 16" 
-                    fill="currentColor"
-                    className="inline-block"
-                  >
-                    <path d="M6 4l4 4-4 4V4z"/>
-                  </svg>
-                )}
+                {/* Always use arrow for folders */}
+                <FaChevronRight size={12} />
               </span>
               <span className={`mr-2 ${colors.textMuted}`}>
                 {getFileIcon(item.name, 'folder', item.isGitHub, isExpanded)}

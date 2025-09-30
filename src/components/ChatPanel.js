@@ -98,6 +98,9 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   const textareaRef = useRef(null);
   const messagesEndRef = useRef(null);
   const sseRef = useRef(null);
+
+  // Drag and drop state (removed visual feedback)
+  const [dragOver, setDragOver] = useState(false); // Keep state but don't change it to prevent blue flash
   
   // Toast notification function
   const showToast = (message, type = 'warning') => {
@@ -1208,6 +1211,237 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
     };
   }, [sseConnection]);
 
+  // Helper function to filter out blank/empty rows from Excel data
+  const filterBlankRows = (rows) => {
+    return rows.filter(row => {
+      // Check if row is completely empty or only contains empty/whitespace values
+      if (!row || row.length === 0) return false;
+      
+      // Check if all cells in the row are empty/null/whitespace
+      const hasNonEmptyCell = row.some(cell => {
+        if (cell === null || cell === undefined) return false;
+        if (typeof cell === 'string') return cell.trim().length > 0;
+        if (typeof cell === 'number') return !isNaN(cell);
+        return true; // Other types (boolean, date, etc.) are considered non-empty
+      });
+      
+      return hasNonEmptyCell;
+    });
+  };
+
+  // Drag and drop handlers
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Don't set dragOver to true to prevent blue flash
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Don't modify dragOver state to prevent blue flash
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Don't modify dragOver state to prevent blue flash
+
+    // Get the dropped file data
+    const data = e.dataTransfer.getData('text/plain');
+    
+    if (data) {
+      try {
+        // Try to parse as JSON (from FileExplorer local files or GitHub files)
+        const fileData = JSON.parse(data);
+        
+        console.log('🗂️ ChatPanel received dropped file:', fileData);
+        
+        // Process the dropped file and add it as a mention
+        await handleDroppedFile(fileData);
+        
+      } catch (error) {
+        console.warn('Failed to parse dropped data as JSON:', error);
+        // If not JSON, might be plain text or other format
+        // Could handle other drop formats here if needed
+      }
+    }
+  };
+
+  const handleDroppedFile = async (fileData) => {
+    try {
+      let mention = null;
+
+      if (fileData.isGitHubFile) {
+        // Handle GitHub files
+        mention = {
+          id: `${fileData.name}-file-${Date.now()}-${Math.random()}`,
+          name: fileData.name,
+          path: fileData.path || fileData.name,
+          type: 'file',
+          source: 'github',
+          isGitHub: true,
+          isCloud: false,
+          fileContent: null // Will be set below based on file type
+        };
+        
+        // For Excel files, set up fileContent with Excel type
+        if (isExcelFile(fileData.name) && fileData.content) {
+          // For GitHub Excel files, we need to ensure the proper structure
+          // Check if the content is already in the expected format
+          if (fileData.content.sheets) {
+            // Already processed - just ensure we have contentString
+            mention.fileContent = {
+              type: 'excel',
+              content: fileData.content,
+              contentString: JSON.stringify(fileData.content, null, 2)
+            };
+          } else {
+            // Raw Excel data - need to process it
+            mention.fileContent = {
+              type: 'excel',
+              content: fileData.content,
+              contentString: JSON.stringify(fileData.content, null, 2)
+            };
+          }
+        } else {
+          // For non-Excel files, use the content directly
+          mention.fileContent = fileData.content || null;
+        }
+        
+        console.log('📁 Adding GitHub file mention:', mention.name);
+        
+      } else if (fileData.isLocalFile && fileData.fileId) {
+        // Handle local files
+        const fileHandle = window.fileHandleRegistry?.get(fileData.fileId);
+        
+        if (fileHandle) {
+          try {
+            const fileObj = await fileHandle.getFile();
+            
+            mention = {
+              id: `${fileData.name}-file-${Date.now()}-${Math.random()}`,
+              name: fileData.name,
+              path: fileData.fullPath || fileData.name,
+              type: 'file',
+              source: 'local',
+              isGitHub: false,
+              isCloud: false,
+              fileContent: null // Will be loaded when needed
+            };
+            
+            // For Excel files, process the content
+            if (isExcelFile(fileData.name)) {
+              const arrayBuffer = await fileObj.arrayBuffer();
+              
+              // Parse Excel content
+              if (typeof XLSX !== 'undefined') {
+                const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+                const sheetNames = workbook.SheetNames;
+                const sheetsData = {};
+                
+                sheetNames.forEach(sheetName => {
+                  const worksheet = workbook.Sheets[sheetName];
+                  const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+                    header: 1, 
+                    defval: '', 
+                    raw: false 
+                  });
+                  
+                  const headers = jsonData[0] || [];
+                  const dataRows = jsonData.slice(1);
+                  const filteredRows = filterBlankRows(dataRows);
+                  
+                  sheetsData[sheetName] = {
+                    headers,
+                    rows: filteredRows,
+                    totalRows: filteredRows.length
+                  };
+                });
+                
+                // Create the full Excel content structure that matches @mention system
+                const fullExcelContent = {
+                  fileName: fileData.name,
+                  sheets: {}
+                };
+                
+                // Convert sheetsData to the expected format
+                sheetNames.forEach(sheetName => {
+                  const sheetData = sheetsData[sheetName];
+                  fullExcelContent.sheets[sheetName] = {
+                    headers: sheetData.headers,
+                    rows: sheetData.rows,
+                    totalRows: sheetData.totalRows
+                  };
+                });
+                
+                // Set fileContent in the same format as @mention system
+                mention.fileContent = {
+                  type: 'excel',
+                  content: fullExcelContent,
+                  contentString: JSON.stringify(fullExcelContent, null, 2)
+                };
+              }
+            } else {
+              // For non-Excel files, read text content
+              mention.fileContent = await fileObj.text();
+            }
+            
+            console.log('💻 Adding local file mention:', mention.name);
+            
+          } catch (error) {
+            console.error('Error reading dropped file:', error);
+            showToast(`Failed to read file: ${fileData.name}`, 'error');
+            return;
+          }
+        } else {
+          console.warn('File handle not found for:', fileData.fileId);
+          showToast(`File handle not found for: ${fileData.name}`, 'error');
+          return;
+        }
+      } else {
+        // Unknown file format
+        console.warn('Unknown file format:', fileData);
+        showToast('Unknown file format', 'error');
+        return;
+      }
+
+      if (mention) {
+        // Add the mention to selected mentions
+        setSelectedMentions(prev => {
+          // Check for duplicates
+          const isDuplicate = prev.some(m => 
+            m.name === mention.name && m.type === mention.type && m.source === mention.source
+          );
+          
+          if (isDuplicate) {
+            showToast(`File ${mention.name} is already attached`, 'warning');
+            return prev;
+          }
+          
+          return [...prev, mention];
+        });
+        
+        // Show success toast - Disabled per user request
+        // showToast(`Added ${mention.name} to attachments`, 'success');
+        
+        // Focus the textarea
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error processing dropped file:', error);
+      showToast('Failed to process dropped file', 'error');
+    }
+  };
+
   // Helper function to get Excel data from AppState
   const getExcelDataForFile = (fileName) => {
     try {
@@ -1245,10 +1479,13 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
         const headers = jsonData[0] || [];
         const dataRows = jsonData.slice(1);
         
+        // Filter out blank rows
+        const filteredRows = filterBlankRows(dataRows);
+        
         sheetsData[sheetName] = {
           headers,
-          rows: dataRows,
-          totalRows: dataRows.length
+          rows: filteredRows,
+          totalRows: filteredRows.length
         };
       });
       
@@ -2538,7 +2775,7 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
       console.log('🏁 Completion message for completed progress:', completionMessage);
       
       return (
-        <div key={`completion-${message.id}`} className="bg-gray-700 border-gray-600 border rounded-lg p-4 my-2">
+        <div key={`completion-${message.id}`} className={`${colors.tertiary} ${colors.border} border rounded-lg p-4 my-2`}>
           <div className="flex items-center gap-2">
             <span className={`${colors.text} font-medium`}>{completionMessage.title}</span>
           </div>
@@ -3416,11 +3653,12 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
     <div 
       className={`${colors.secondary} ${colors.border} border-l flex flex-col h-full relative`}
       style={{ width }}
+      onDragOver={handleDragOver}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
+      
       {/* Chat Header */}
       <div className={`p-4 ${colors.border} border-b flex items-center justify-between`}>
         <h3 className={`text-sm font-medium ${colors.text}`}>CHAT</h3>
@@ -3507,14 +3745,14 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
                   >
                     <span 
                       className="truncate"
-                      title={mention.excelData ? 
+                      title={mention.excelData && mention.type === 'context' ? 
                         `@context[${mention.name}:${mention.excelData.sheetName}:Row${mention.excelData.rowIndex + 1}]` :
                         mention.codeData ?
                         `@code[${mention.name}:line${mention.codeData.startLine === mention.codeData.endLine ? '' : 's'} ${mention.codeData.startLine === mention.codeData.endLine ? mention.codeData.startLine : `${mention.codeData.startLine}-${mention.codeData.endLine}`}]` :
                         `@${mention.type}[${mention.name}]`
                       }
                     >
-                      {mention.excelData ? 
+                      {mention.excelData && mention.type === 'context' ? 
                         `@context[${mention.name}:${mention.excelData.sheetName}:Row${mention.excelData.rowIndex + 1}]` :
                         mention.codeData ?
                         `@code[${mention.name}:line${mention.codeData.startLine === mention.codeData.endLine ? '' : 's'} ${mention.codeData.startLine === mention.codeData.endLine ? mention.codeData.startLine : `${mention.codeData.startLine}-${mention.codeData.endLine}`}]` :

@@ -4,6 +4,22 @@ import * as XLSX from 'xlsx';
 
 const ExcelViewer = ({ file, fileContent, initialActiveSheet, sheetNames: propSheetNames, onSheetChange }) => {
   const { colors } = useTheme();
+  
+  // Helper function to filter out blank rows
+  const filterBlankRows = useCallback((rows) => {
+    return rows.filter(row => {
+      // Check if row is an array and has at least one non-empty cell
+      if (Array.isArray(row)) {
+        return row.some(cell => cell && cell.toString().trim() !== '');
+      }
+      // Check if row is an object and has at least one non-empty value
+      if (typeof row === 'object' && row !== null) {
+        return Object.values(row).some(cell => cell && cell.toString().trim() !== '');
+      }
+      return false;
+    });
+  }, []);
+  
   const [workbook, setWorkbook] = useState(null);
   const [activeSheet, setActiveSheet] = useState(initialActiveSheet || '');
   const [sheetData, setSheetData] = useState([]);
@@ -247,8 +263,15 @@ const ExcelViewer = ({ file, fileContent, initialActiveSheet, sheetNames: propSh
         defval: '', 
         raw: false 
       });
-      setOriginalSheetData(jsonData);
-      setSheetData(jsonData);
+      
+      // Filter out blank rows from the data while preserving the header
+      const headers = jsonData[0] || [];
+      const dataRows = jsonData.slice(1);
+      const filteredRows = filterBlankRows(dataRows);
+      const filteredData = [headers, ...filteredRows];
+      
+      setOriginalSheetData(filteredData);
+      setSheetData(filteredData);
       lastLoadedSheetRef.current = sheetName;
       
       // Only reset filters when explicitly requested (e.g., sheet switching)
@@ -267,7 +290,7 @@ const ExcelViewer = ({ file, fileContent, initialActiveSheet, sheetNames: propSh
       console.error('Error loading sheet data:', err);
       setError(`Failed to load sheet "${sheetName}": ${err.message}`);
     }
-  }, [storageKey]);
+  }, [filterBlankRows]);
 
   const handleSheetChange = (sheetName) => {
     console.log('ExcelViewer: handleSheetChange called:', {
