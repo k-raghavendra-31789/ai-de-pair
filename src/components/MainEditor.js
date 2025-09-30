@@ -2730,7 +2730,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
               onChange={toggleTheme}
               className="sr-only peer"
             />
-            <div className={`w-9 h-5 ${theme === 'dark' ? 'bg-gray-600' : 'bg-gray-300'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all ${theme === 'dark' ? 'peer-checked:bg-blue-600' : 'peer-checked:bg-blue-500'}`}></div>
+            <div className={`w-9 h-5 ${theme === 'dark' ? colors.tertiary : 'bg-gray-300'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all ${colors.accentBg}`}></div>
           </label>
         </div>
 
@@ -2848,7 +2848,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
             <div className="flex flex-col items-center space-y-6 max-w-md text-center p-6">
               {/* Large Logo */}
               <img 
-                src="/DataMonk-Gray.png" 
+                src="/logo.png" 
                 alt="DataMonk Logo" 
                 className="w-32 h-auto opacity-90 hover:opacity-100 transition-opacity duration-300"
               />
@@ -2868,9 +2868,9 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                     <div className="flex items-center gap-4">
                       <span>Toggle Terminal</span>
                       <div className="flex items-center space-x-1">
-                        <kbd className="px-1.5 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">Ctrl</kbd>
-                        <span className="text-xs text-gray-400">+</span>
-                        <kbd className="px-1.5 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">`</kbd>
+                        <kbd className={`px-1.5 py-0.5 text-xs font-mono ${colors.quaternary} ${colors.text} rounded`}>Ctrl</kbd>
+                        <span className={`text-xs ${colors.textMuted}`}>+</span>
+                        <kbd className={`px-1.5 py-0.5 text-xs font-mono ${colors.quaternary} ${colors.text} rounded`}>`</kbd>
                       </div>
                     </div>
                   </div>
@@ -2878,9 +2878,9 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                     <div className="flex items-center gap-4">
                       <span>Bring up In-line AI Editing</span>
                       <div className="flex items-center space-x-1">
-                        <kbd className="px-1.5 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">Ctrl</kbd>
-                        <span className="text-xs text-gray-400">+</span>
-                        <kbd className="px-1.5 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">K</kbd>
+                        <kbd className={`px-1.5 py-0.5 text-xs font-mono ${colors.quaternary} ${colors.text} rounded`}>Ctrl</kbd>
+                        <span className={`text-xs ${colors.textMuted}`}>+</span>
+                        <kbd className={`px-1.5 py-0.5 text-xs font-mono ${colors.quaternary} ${colors.text} rounded`}>K</kbd>
                       </div>
                     </div>
                   </div>
@@ -2888,7 +2888,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                     <div className="flex items-center gap-4">
                       <span>Attach DataContext with</span>
                       <div className="flex items-center">
-                        <kbd className="px-2 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">@context</kbd>
+                        <kbd className={`px-2 py-0.5 text-xs font-mono ${colors.quaternary} ${colors.text} rounded`}>@context</kbd>
                       </div>
                     </div>
                   </div>
@@ -2896,7 +2896,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                     <div className="flex items-center gap-4">
                       <span>Drag files from explorer to open</span>
                       <div className="flex items-center">
-                        <kbd className="px-2 py-0.5 text-xs font-mono bg-gray-600 text-white rounded">Drag & Drop</kbd>
+                        <kbd className={`px-2 py-0.5 text-xs font-mono ${colors.quaternary} ${colors.text} rounded`}>Drag & Drop</kbd>
                       </div>
                     </div>
                   </div>
@@ -3156,7 +3156,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                     type="checkbox"
                     checked={createPR}
                     onChange={(e) => setCreatePR(e.target.checked)}
-                    className="w-5 h-5 text-gray-600 bg-gray-700 border-gray-600 rounded focus:ring-gray-500"
+                    className={`w-5 h-5 ${colors.textMuted} ${colors.secondary} ${colors.borderLight} rounded focus:ring-2 focus:ring-blue-500`}
                   />
                 </label>
               </div>
@@ -3191,7 +3191,7 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                             <button
                               key={example}
                               onClick={() => setBranchName(example)}
-                              className="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600 transition-all"
+                              className={`px-3 py-1 text-xs rounded-full ${colors.secondary} ${colors.textSecondary} ${colors.hover} border ${colors.borderLight} transition-all`}
                               type="button"
                             >
                               {example}
@@ -3296,8 +3296,8 @@ Tip: Make sure you're in the correct directory containing "${fileName}"`;
                 disabled={!commitMessage.trim() || isCommitting}
                 className={`px-6 py-3 text-sm font-medium text-white rounded-lg transition-all ${
                   !commitMessage.trim() || isCommitting
-                    ? 'bg-gray-600 cursor-not-allowed'
-                    : 'bg-gray-700 hover:bg-gray-600'
+                    ? `${colors.quaternary} cursor-not-allowed opacity-50`
+                    : `${colors.accentBg} hover:bg-[#0d5a94]`
                 } flex items-center gap-2`}
               >
                 {isCommitting ? (
