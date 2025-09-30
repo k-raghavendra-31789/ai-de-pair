@@ -472,7 +472,7 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
       setSelectedMentions(prev => [...prev, mention]);
       
       // Show success message
-      showToast(`Added "${fileData.name}" as attachment`, 'success');
+      // showToast(`Added "${fileData.name}" as attachment`, 'success');
       
       console.log('✅ Successfully added dropped file as mention:', mention);
       
@@ -1230,217 +1230,217 @@ const ChatPanel = ({ width, getAllAvailableFiles }) => {
   };
 
   // Drag and drop handlers
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
+  // const handleDragOver = (e) => {
+  //   e.preventDefault();
+  //   e.stopPropagation();
+  // };
 
-  const handleDragEnter = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Don't set dragOver to true to prevent blue flash
-  };
+  // const handleDragEnter = (e) => {
+  //   e.preventDefault();
+  //   e.stopPropagation();
+  //   // Don't set dragOver to true to prevent blue flash
+  // };
 
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Don't modify dragOver state to prevent blue flash
-  };
+  // const handleDragLeave = (e) => {
+  //   e.preventDefault();
+  //   e.stopPropagation();
+  //   // Don't modify dragOver state to prevent blue flash
+  // };
 
-  const handleDrop = async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Don't modify dragOver state to prevent blue flash
+  // const handleDrop = async (e) => {
+  //   e.preventDefault();
+  //   e.stopPropagation();
+  //   // Don't modify dragOver state to prevent blue flash
 
-    // Get the dropped file data
-    const data = e.dataTransfer.getData('text/plain');
+  //   // Get the dropped file data
+  //   const data = e.dataTransfer.getData('text/plain');
     
-    if (data) {
-      try {
-        // Try to parse as JSON (from FileExplorer local files or GitHub files)
-        const fileData = JSON.parse(data);
+  //   if (data) {
+  //     try {
+  //       // Try to parse as JSON (from FileExplorer local files or GitHub files)
+  //       const fileData = JSON.parse(data);
         
-        console.log('🗂️ ChatPanel received dropped file:', fileData);
+  //       console.log('🗂️ ChatPanel received dropped file:', fileData);
         
-        // Process the dropped file and add it as a mention
-        await handleDroppedFile(fileData);
+  //       // Process the dropped file and add it as a mention
+  //       await handleDroppedFile(fileData);
         
-      } catch (error) {
-        console.warn('Failed to parse dropped data as JSON:', error);
-        // If not JSON, might be plain text or other format
-        // Could handle other drop formats here if needed
-      }
-    }
-  };
+  //     } catch (error) {
+  //       console.warn('Failed to parse dropped data as JSON:', error);
+  //       // If not JSON, might be plain text or other format
+  //       // Could handle other drop formats here if needed
+  //     }
+  //   }
+  // };
 
-  const handleDroppedFile = async (fileData) => {
-    try {
-      let mention = null;
+  // const handleDroppedFile = async (fileData) => {
+  //   try {
+  //     let mention = null;
 
-      if (fileData.isGitHubFile) {
-        // Handle GitHub files
-        mention = {
-          id: `${fileData.name}-file-${Date.now()}-${Math.random()}`,
-          name: fileData.name,
-          path: fileData.path || fileData.name,
-          type: 'file',
-          source: 'github',
-          isGitHub: true,
-          isCloud: false,
-          fileContent: null // Will be set below based on file type
-        };
+  //     if (fileData.isGitHubFile) {
+  //       // Handle GitHub files
+  //       mention = {
+  //         id: `${fileData.name}-file-${Date.now()}-${Math.random()}`,
+  //         name: fileData.name,
+  //         path: fileData.path || fileData.name,
+  //         type: 'file',
+  //         source: 'github',
+  //         isGitHub: true,
+  //         isCloud: false,
+  //         fileContent: null // Will be set below based on file type
+  //       };
         
-        // For Excel files, set up fileContent with Excel type
-        if (isExcelFile(fileData.name) && fileData.content) {
-          // For GitHub Excel files, we need to ensure the proper structure
-          // Check if the content is already in the expected format
-          if (fileData.content.sheets) {
-            // Already processed - just ensure we have contentString
-            mention.fileContent = {
-              type: 'excel',
-              content: fileData.content,
-              contentString: JSON.stringify(fileData.content, null, 2)
-            };
-          } else {
-            // Raw Excel data - need to process it
-            mention.fileContent = {
-              type: 'excel',
-              content: fileData.content,
-              contentString: JSON.stringify(fileData.content, null, 2)
-            };
-          }
-        } else {
-          // For non-Excel files, use the content directly
-          mention.fileContent = fileData.content || null;
-        }
+  //       // For Excel files, set up fileContent with Excel type
+  //       if (isExcelFile(fileData.name) && fileData.content) {
+  //         // For GitHub Excel files, we need to ensure the proper structure
+  //         // Check if the content is already in the expected format
+  //         if (fileData.content.sheets) {
+  //           // Already processed - just ensure we have contentString
+  //           mention.fileContent = {
+  //             type: 'excel',
+  //             content: fileData.content,
+  //             contentString: JSON.stringify(fileData.content, null, 2)
+  //           };
+  //         } else {
+  //           // Raw Excel data - need to process it
+  //           mention.fileContent = {
+  //             type: 'excel',
+  //             content: fileData.content,
+  //             contentString: JSON.stringify(fileData.content, null, 2)
+  //           };
+  //         }
+  //       } else {
+  //         // For non-Excel files, use the content directly
+  //         mention.fileContent = fileData.content || null;
+  //       }
         
-        console.log('📁 Adding GitHub file mention:', mention.name);
+  //       console.log('📁 Adding GitHub file mention:', mention.name);
         
-      } else if (fileData.isLocalFile && fileData.fileId) {
-        // Handle local files
-        const fileHandle = window.fileHandleRegistry?.get(fileData.fileId);
+  //     } else if (fileData.isLocalFile && fileData.fileId) {
+  //       // Handle local files
+  //       const fileHandle = window.fileHandleRegistry?.get(fileData.fileId);
         
-        if (fileHandle) {
-          try {
-            const fileObj = await fileHandle.getFile();
+  //       if (fileHandle) {
+  //         try {
+  //           const fileObj = await fileHandle.getFile();
             
-            mention = {
-              id: `${fileData.name}-file-${Date.now()}-${Math.random()}`,
-              name: fileData.name,
-              path: fileData.fullPath || fileData.name,
-              type: 'file',
-              source: 'local',
-              isGitHub: false,
-              isCloud: false,
-              fileContent: null // Will be loaded when needed
-            };
+  //           mention = {
+  //             id: `${fileData.name}-file-${Date.now()}-${Math.random()}`,
+  //             name: fileData.name,
+  //             path: fileData.fullPath || fileData.name,
+  //             type: 'file',
+  //             source: 'local',
+  //             isGitHub: false,
+  //             isCloud: false,
+  //             fileContent: null // Will be loaded when needed
+  //           };
             
-            // For Excel files, process the content
-            if (isExcelFile(fileData.name)) {
-              const arrayBuffer = await fileObj.arrayBuffer();
+  //           // For Excel files, process the content
+  //           if (isExcelFile(fileData.name)) {
+  //             const arrayBuffer = await fileObj.arrayBuffer();
               
-              // Parse Excel content
-              if (typeof XLSX !== 'undefined') {
-                const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-                const sheetNames = workbook.SheetNames;
-                const sheetsData = {};
+  //             // Parse Excel content
+  //             if (typeof XLSX !== 'undefined') {
+  //               const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+  //               const sheetNames = workbook.SheetNames;
+  //               const sheetsData = {};
                 
-                sheetNames.forEach(sheetName => {
-                  const worksheet = workbook.Sheets[sheetName];
-                  const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
-                    header: 1, 
-                    defval: '', 
-                    raw: false 
-                  });
+  //               sheetNames.forEach(sheetName => {
+  //                 const worksheet = workbook.Sheets[sheetName];
+  //                 const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+  //                   header: 1, 
+  //                   defval: '', 
+  //                   raw: false 
+  //                 });
                   
-                  const headers = jsonData[0] || [];
-                  const dataRows = jsonData.slice(1);
-                  const filteredRows = filterBlankRows(dataRows);
+  //                 const headers = jsonData[0] || [];
+  //                 const dataRows = jsonData.slice(1);
+  //                 const filteredRows = filterBlankRows(dataRows);
                   
-                  sheetsData[sheetName] = {
-                    headers,
-                    rows: filteredRows,
-                    totalRows: filteredRows.length
-                  };
-                });
+  //                 sheetsData[sheetName] = {
+  //                   headers,
+  //                   rows: filteredRows,
+  //                   totalRows: filteredRows.length
+  //                 };
+  //               });
                 
-                // Create the full Excel content structure that matches @mention system
-                const fullExcelContent = {
-                  fileName: fileData.name,
-                  sheets: {}
-                };
+  //               // Create the full Excel content structure that matches @mention system
+  //               const fullExcelContent = {
+  //                 fileName: fileData.name,
+  //                 sheets: {}
+  //               };
                 
-                // Convert sheetsData to the expected format
-                sheetNames.forEach(sheetName => {
-                  const sheetData = sheetsData[sheetName];
-                  fullExcelContent.sheets[sheetName] = {
-                    headers: sheetData.headers,
-                    rows: sheetData.rows,
-                    totalRows: sheetData.totalRows
-                  };
-                });
+  //               // Convert sheetsData to the expected format
+  //               sheetNames.forEach(sheetName => {
+  //                 const sheetData = sheetsData[sheetName];
+  //                 fullExcelContent.sheets[sheetName] = {
+  //                   headers: sheetData.headers,
+  //                   rows: sheetData.rows,
+  //                   totalRows: sheetData.totalRows
+  //                 };
+  //               });
                 
-                // Set fileContent in the same format as @mention system
-                mention.fileContent = {
-                  type: 'excel',
-                  content: fullExcelContent,
-                  contentString: JSON.stringify(fullExcelContent, null, 2)
-                };
-              }
-            } else {
-              // For non-Excel files, read text content
-              mention.fileContent = await fileObj.text();
-            }
+  //               // Set fileContent in the same format as @mention system
+  //               mention.fileContent = {
+  //                 type: 'excel',
+  //                 content: fullExcelContent,
+  //                 contentString: JSON.stringify(fullExcelContent, null, 2)
+  //               };
+  //             }
+  //           } else {
+  //             // For non-Excel files, read text content
+  //             mention.fileContent = await fileObj.text();
+  //           }
             
-            console.log('💻 Adding local file mention:', mention.name);
+  //           console.log('💻 Adding local file mention:', mention.name);
             
-          } catch (error) {
-            console.error('Error reading dropped file:', error);
-            showToast(`Failed to read file: ${fileData.name}`, 'error');
-            return;
-          }
-        } else {
-          console.warn('File handle not found for:', fileData.fileId);
-          showToast(`File handle not found for: ${fileData.name}`, 'error');
-          return;
-        }
-      } else {
-        // Unknown file format
-        console.warn('Unknown file format:', fileData);
-        showToast('Unknown file format', 'error');
-        return;
-      }
+  //         } catch (error) {
+  //           console.error('Error reading dropped file:', error);
+  //           showToast(`Failed to read file: ${fileData.name}`, 'error');
+  //           return;
+  //         }
+  //       } else {
+  //         console.warn('File handle not found for:', fileData.fileId);
+  //         showToast(`File handle not found for: ${fileData.name}`, 'error');
+  //         return;
+  //       }
+  //     } else {
+  //       // Unknown file format
+  //       console.warn('Unknown file format:', fileData);
+  //       showToast('Unknown file format', 'error');
+  //       return;
+  //     }
 
-      if (mention) {
-        // Add the mention to selected mentions
-        setSelectedMentions(prev => {
-          // Check for duplicates
-          const isDuplicate = prev.some(m => 
-            m.name === mention.name && m.type === mention.type && m.source === mention.source
-          );
+  //     if (mention) {
+  //       // Add the mention to selected mentions
+  //       setSelectedMentions(prev => {
+  //         // Check for duplicates
+  //         const isDuplicate = prev.some(m => 
+  //           m.name === mention.name && m.type === mention.type && m.source === mention.source
+  //         );
           
-          if (isDuplicate) {
-            showToast(`File ${mention.name} is already attached`, 'warning');
-            return prev;
-          }
+  //         if (isDuplicate) {
+  //           showToast(`File ${mention.name} is already attached`, 'warning');
+  //           return prev;
+  //         }
           
-          return [...prev, mention];
-        });
+  //         return [...prev, mention];
+  //       });
         
-        // Show success toast - Disabled per user request
-        // showToast(`Added ${mention.name} to attachments`, 'success');
+  //       // Show success toast - Disabled per user request
+  //       // showToast(`Added ${mention.name} to attachments`, 'success');
         
-        // Focus the textarea
-        if (textareaRef.current) {
-          textareaRef.current.focus();
-        }
-      }
+  //       // Focus the textarea
+  //       if (textareaRef.current) {
+  //         textareaRef.current.focus();
+  //       }
+  //     }
       
-    } catch (error) {
-      console.error('Error processing dropped file:', error);
-      showToast('Failed to process dropped file', 'error');
-    }
-  };
+  //   } catch (error) {
+  //     console.error('Error processing dropped file:', error);
+  //     showToast('Failed to process dropped file', 'error');
+  //   }
+  // };
 
   // Helper function to get Excel data from AppState
   const getExcelDataForFile = (fileName) => {
